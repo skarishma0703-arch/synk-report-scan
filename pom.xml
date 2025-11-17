@@ -379,11 +379,11 @@
 
 		<!-- Added by Lokesh -->
 		<!-- https://mvnrepository.com/artifact/ca.juliusdavies/not-yet-commons-ssl -->
-		<dependency>
-			<groupId>ca.juliusdavies</groupId>
-			<artifactId>not-yet-commons-ssl</artifactId>
-			<version>0.3.11</version>
-		</dependency>
+<!--		<dependency>-->
+<!--			<groupId>ca.juliusdavies</groupId>-->
+<!--			<artifactId>not-yet-commons-ssl</artifactId>-->
+<!--			<version>0.3.11</version>-->
+<!--		</dependency>-->
 
 		<!-- https://mvnrepository.com/artifact/org.apache.santuario/xmlsec -->
 		<dependency>
