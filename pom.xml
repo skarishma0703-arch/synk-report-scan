@@ -1,0 +1,552 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+		 xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/maven-v4_0_0.xsd">
+
+	<modelVersion>4.0.0</modelVersion>
+	<groupId>com.miniorange.sso.saml</groupId>
+	<artifactId>bitbucket-sso</artifactId>
+	<version>2.1.14</version>
+
+	<organization>
+		<name>miniOrange</name>
+		<url>https://www.miniorange.com/</url>
+	</organization>
+
+	<name>Single Sign On (SSO) for Bitbucket SAML</name>
+	<packaging>atlassian-plugin</packaging>
+
+	<dependencyManagement>
+		<dependencies>
+			<dependency>
+				<groupId>com.atlassian.bitbucket.server</groupId>
+				<artifactId>bitbucket-parent</artifactId>
+				<version>${bitbucket.version}</version>
+				<type>pom</type>
+				<scope>import</scope>
+			</dependency>
+		</dependencies>
+	</dependencyManagement>
+
+	<dependencies>
+
+		<!-- dependency to make plugin use atlassain license -->
+
+		<!-- https://mvnrepository.com/artifact/com.atlassian.seraph/atlassian-seraph
+			<dependency> <groupId>com.atlassian.seraph</groupId> <artifactId>atlassian-seraph</artifactId>
+			<version>3.1.1</version> <scope>provided</scope> </dependency> -->
+
+		<!-- https://mvnrepository.com/artifact/com.atlassian.scheduler/atlassian-scheduler-api -->
+		<dependency>
+			<groupId>com.atlassian.scheduler</groupId>
+			<artifactId>atlassian-scheduler-api</artifactId>
+			<version>1.7.0</version>
+			<scope>provided</scope>
+		</dependency>
+
+
+		<!-- https://mvnrepository.com/artifact/org.json/json -->
+		<dependency>
+			<groupId>org.json</groupId>
+			<artifactId>json</artifactId>
+			<version>20231013</version>
+		</dependency>
+
+		<dependency>
+			<groupId>com.atlassian.upm</groupId>
+			<artifactId>licensing-api</artifactId>
+			<version>2.21.4</version>
+			<scope>provided</scope>
+		</dependency>
+
+		<dependency>
+			<groupId>com.atlassian.upm</groupId>
+			<artifactId>upm-api</artifactId>
+			<version>2.21</version>
+			<scope>provided</scope>
+		</dependency>
+		<!--End -->
+
+		<dependency>
+			<groupId>com.atlassian.templaterenderer</groupId>
+			<artifactId>atlassian-template-renderer-api</artifactId>
+			<version>1.1.1</version>
+			<scope>provided</scope>
+		</dependency>
+
+		<dependency>
+			<groupId>com.opencsv</groupId>
+			<artifactId>opencsv</artifactId>
+			<version>5.9</version>
+		</dependency>
+
+		<dependency>
+			<groupId>com.google.code.gson</groupId>
+			<artifactId>gson</artifactId>
+			<version>2.10.1</version>
+		</dependency>
+
+		<dependency>
+			<groupId>com.atlassian.activeobjects</groupId>
+			<artifactId>activeobjects-plugin</artifactId>
+			<version>3.6.3</version>
+			<scope>provided</scope>
+		</dependency>
+
+
+		<dependency>
+			<groupId>com.atlassian.sal</groupId>
+			<artifactId>sal-api</artifactId>
+			<version>3.0.7</version>
+			<scope>provided</scope>
+		</dependency>
+		<dependency>
+			<groupId>com.atlassian.bitbucket.server</groupId>
+			<artifactId>bitbucket-api</artifactId>
+			<version>5.11.0</version>
+			<scope>provided</scope>
+		</dependency>
+		<dependency>
+			<groupId>com.atlassian.bitbucket.server</groupId>
+			<artifactId>bitbucket-spi</artifactId>
+			<scope>provided</scope>
+		</dependency>
+		<dependency>
+			<groupId>com.atlassian.bitbucket.server</groupId>
+			<artifactId>bitbucket-page-objects</artifactId>
+			<scope>provided</scope>
+			<exclusions>
+				<exclusion>
+					<groupId>org.bouncycastle</groupId>
+					<artifactId>bcprov-jdk15on</artifactId>
+				</exclusion>
+				<exclusion>
+					<groupId>commons-codec</groupId>
+					<artifactId>commons-codec</artifactId>
+				</exclusion>
+			</exclusions>
+		</dependency>
+		<dependency>
+			<groupId>javax.servlet</groupId>
+			<artifactId>javax.servlet-api</artifactId>
+			<scope>provided</scope>
+		</dependency>
+		<dependency>
+			<groupId>junit</groupId>
+			<artifactId>junit</artifactId>
+			<version>4.10</version>
+			<scope>test</scope>
+		</dependency>
+		<dependency>
+			<groupId>commons-lang</groupId>
+			<artifactId>commons-lang</artifactId>
+			<version>2.6</version>
+			<scope>provided</scope>
+		</dependency>
+
+		<dependency>
+			<groupId>com.atlassian.plugin</groupId>
+			<artifactId>atlassian-spring-scanner-annotation</artifactId>
+			<version>${atlassian.spring.scanner.version}</version>
+			<scope>compile</scope>
+		</dependency>
+
+		<dependency>
+			<groupId>com.atlassian.plugin</groupId>
+			<artifactId>atlassian-spring-scanner-runtime</artifactId>
+			<version>${atlassian.spring.scanner.version}</version>
+			<scope>runtime</scope>
+		</dependency>
+
+
+		<dependency>
+			<groupId>javax.inject</groupId>
+			<artifactId>javax.inject</artifactId>
+			<version>1</version>
+			<scope>provided</scope>
+		</dependency>
+
+		<!-- WIRED TEST RUNNER DEPENDENCIES -->
+		<dependency>
+			<groupId>com.atlassian.plugins</groupId>
+			<artifactId>atlassian-plugins-osgi-testrunner</artifactId>
+			<version>${plugin.testrunner.version}</version>
+			<scope>test</scope>
+		</dependency>
+
+		<dependency>
+			<groupId>org.jsoup</groupId>
+			<artifactId>jsoup</artifactId>
+			<version>1.8.3</version>
+			<scope>provided</scope>
+		</dependency>
+
+		<dependency>
+			<groupId>com.atlassian.plugins</groupId>
+			<artifactId>atlassian-plugins-api</artifactId>
+			<version>4.4.8</version>
+			<scope>provided</scope>
+		</dependency>
+
+		<dependency>
+			<groupId>javax.ws.rs</groupId>
+			<artifactId>jsr311-api</artifactId>
+			<version>1.1.1</version>
+			<scope>provided</scope>
+		</dependency>
+		<!-- <dependency> <groupId>com.google.code.gson</groupId> <artifactId>gson</artifactId>
+			<version>2.2.2-atlassian-1</version> </dependency> -->
+		<!-- 		<dependency>
+                    <groupId>com.fasterxml.jackson.core</groupId>
+                    <artifactId>jackson-core</artifactId>
+                    <version>2.7.4</version>
+                </dependency>
+
+                <dependency>
+                    <groupId>com.fasterxml.jackson.core</groupId>
+                    <artifactId>jackson-annotations</artifactId>
+                    <version>2.7.4</version>
+                </dependency>
+         -->
+		<dependency>
+			<groupId>com.fasterxml.jackson.core</groupId>
+			<artifactId>jackson-databind</artifactId>
+			<version>2.15.0</version>
+		</dependency>
+
+		<dependency>
+			<groupId>com.atlassian.json</groupId>
+			<artifactId>atlassian-json-jsonorg</artifactId>
+			<version>0.9</version>
+		</dependency>
+
+		<dependency>
+			<groupId>org.opensaml</groupId>
+			<artifactId>opensaml</artifactId>
+			<version>2.6.5</version>
+			<exclusions>
+				<exclusion>
+					<groupId>xalan</groupId>
+					<artifactId>xalan</artifactId>
+				</exclusion>
+				<exclusion>
+					<groupId>xerces</groupId>
+					<artifactId>xercesImpl</artifactId>
+				</exclusion>
+				<exclusion>
+					<groupId>xalan</groupId>
+					<artifactId>serializer</artifactId>
+				</exclusion>
+				<exclusion>
+					<groupId>xml-resolver</groupId>
+					<artifactId>xml-resolver</artifactId>
+				</exclusion>
+				<exclusion>
+					<groupId>org.apache.velocity</groupId>
+					<artifactId>velocity</artifactId>
+				</exclusion>
+				<exclusion>
+					<groupId>commons-lang</groupId>
+					<artifactId>commons-lang</artifactId>
+				</exclusion>
+				<exclusion>
+					<groupId>ca.juliusdavies</groupId>
+					<artifactId>not-yet-commons-ssl</artifactId>
+				</exclusion>
+				<exclusion>
+					<groupId>org.apache.santuario</groupId>
+					<artifactId>xmlsec</artifactId>
+				</exclusion>
+				<exclusion>
+					<groupId>commons-codec</groupId>
+					<artifactId>commons-codec</artifactId>
+				</exclusion>
+				<exclusion>
+					<groupId>org.bouncycastle</groupId>
+					<artifactId>bcprov-jdk15on</artifactId>
+				</exclusion>
+				<exclusion>
+					<groupId>commons-httpclient</groupId>
+					<artifactId>commons-httpclient</artifactId>
+				</exclusion>
+				<exclusion>
+					<groupId>org.owasp.esapi</groupId>
+					<artifactId>esapi</artifactId>
+				</exclusion>
+			</exclusions>
+		</dependency>
+		<dependency>
+			<groupId>commons-beanutils</groupId>
+			<artifactId>commons-beanutils</artifactId>
+			<version>1.11.0</version>
+		</dependency>
+
+		<!--<dependency> <groupId>org.opensaml</groupId> <artifactId>xmltooling</artifactId>
+			<version>1.4.0</version> </dependency> -->
+
+		<!-- <dependency> <groupId>com.atlassian.seraph</groupId> <artifactId>atlassian-seraph</artifactId>
+			<version>2.6.3</version> <scope>provided</scope> </dependency> -->
+		<dependency>
+			<groupId>org.apache.commons</groupId>
+			<artifactId>commons-lang3</artifactId>
+			<scope>provided</scope>
+		</dependency>
+		<dependency>
+			<groupId>org.slf4j</groupId>
+			<artifactId>slf4j-api</artifactId>
+			<scope>provided</scope>
+		</dependency>
+
+		<!-- <dependency> <groupId>xerces</groupId> <artifactId>xercesImpl</artifactId>
+			<version>2.11.0-atlassian-01</version> <scope>provided</scope> </dependency>
+			<dependency> <groupId>xml-resolver</groupId> <artifactId>xml-resolver</artifactId>
+			<version>1.2</version> </dependency> -->
+		<!-- <dependency> <groupId>com.opensymphony</groupId> <artifactId>webwork</artifactId>
+			<version>2.2.6-atlassian-3</version> </dependency> -->
+
+
+		<!-- https://mvnrepository.com/artifact/net.sf.json-lib/json-lib -->
+		<!-- 	<dependency>
+                <groupId>net.sf.json-lib</groupId>
+                <artifactId>json-lib</artifactId>
+                <version>2.4</version>
+                <classifier>jdk15</classifier>
+            </dependency> -->
+		<!-- https://mvnrepository.com/artifact/commons-collections/commons-collections -->
+		<dependency>
+			<groupId>commons-collections</groupId>
+			<artifactId>commons-collections</artifactId>
+			<version>3.2.2</version>
+		</dependency>
+		<!--<dependency>
+                <groupId>org.apache.struts</groupId>
+                <artifactId>struts2-core</artifactId>
+                <version>2.5.13</version>
+        </dependency>-->
+
+		<!-- https://mvnrepository.com/artifact/org.jsoup/jsoup -->
+		<dependency>
+			<groupId>org.jsoup</groupId>
+			<artifactId>jsoup</artifactId>
+			<version>1.15.3</version>
+		</dependency>
+
+		<dependency>
+			<groupId>com.atlassian.crowd</groupId>
+			<artifactId>crowd-api</artifactId>
+			<version>3.3.3</version>
+			<scope>provided</scope>
+			<exclusions>
+				<exclusion>
+					<groupId>commons-codec</groupId>
+					<artifactId>commons-codec</artifactId>
+				</exclusion>
+			</exclusions>
+		</dependency>
+
+		<dependency>
+			<groupId>com.atlassian.crowd</groupId>
+			<artifactId>embedded-crowd-core</artifactId>
+			<version>2.8.3</version>
+			<scope>provided</scope>
+			<exclusions>
+				<exclusion>
+					<groupId>commons-codec</groupId>
+					<artifactId>commons-codec</artifactId>
+				</exclusion>
+			</exclusions>
+		</dependency>
+
+		<dependency>
+			<groupId>com.amazonaws</groupId>
+			<artifactId>aws-java-sdk-cognitoidp</artifactId>
+			<version>1.12.353</version>
+			<exclusions>
+				<exclusion>
+					<groupId>commons-codec</groupId>
+					<artifactId>commons-codec</artifactId>
+				</exclusion>
+				<exclusion>
+					<groupId>software.amazon.ion</groupId>
+					<artifactId>ion-java</artifactId>
+				</exclusion>
+			</exclusions>
+		</dependency>
+		<dependency>
+			<groupId>com.atlassian.bitbucket.server</groupId>
+			<artifactId>bitbucket-rest-api</artifactId>
+			<version>5.5.0</version>
+		</dependency>
+
+		<!-- Added by Lokesh -->
+		<!-- https://mvnrepository.com/artifact/ca.juliusdavies/not-yet-commons-ssl -->
+		<dependency>
+			<groupId>ca.juliusdavies</groupId>
+			<artifactId>not-yet-commons-ssl</artifactId>
+			<version>0.3.11</version>
+		</dependency>
+
+		<!-- https://mvnrepository.com/artifact/org.apache.santuario/xmlsec -->
+		<dependency>
+			<groupId>org.apache.santuario</groupId>
+			<artifactId>xmlsec</artifactId>
+			<version>3.0.3</version>
+			<exclusions>
+				<exclusion>
+					<groupId>commons-codec</groupId>
+					<artifactId>commons-codec</artifactId>
+				</exclusion>
+			</exclusions>
+		</dependency>
+
+		<!-- https://mvnrepository.com/artifact/org.bouncycastle/bcprov-jdk15on -->
+		<dependency>
+			<groupId>org.bouncycastle</groupId>
+			<artifactId>bcmail-jdk18on</artifactId>
+			<version>1.79</version>
+		</dependency>
+
+		<dependency>
+			<groupId>org.apache.httpcomponents</groupId>
+			<artifactId>httpclient</artifactId>
+			<version>4.5.13</version>
+			<scope>provided</scope>
+			<exclusions>
+				<exclusion>
+					<groupId>commons-codec</groupId>
+					<artifactId>commons-codec</artifactId>
+				</exclusion>
+			</exclusions>
+		</dependency>
+
+		<!-- https://mvnrepository.com/artifact/commons-codec/commons-codec -->
+		<dependency>
+			<groupId>commons-codec</groupId>
+			<artifactId>commons-codec</artifactId>
+			<version>1.15</version>
+		</dependency>
+
+		<!--&lt;!&ndash; https://mvnrepository.com/artifact/commons-httpclient/commons-httpclient &ndash;&gt;
+		<dependency>
+			<groupId>commons-httpclient</groupId>
+			<artifactId>commons-httpclient</artifactId>
+			<version>3.1-atlassian-2</version>
+		</dependency>-->
+
+
+		<!--<dependency>
+			<groupId>org.owasp.esapi</groupId>
+			<artifactId>esapi</artifactId>
+			<version>2.5.1.0</version>
+			<scope>provided
+			</scope>
+		</dependency>-->
+<!--		<dependency>-->
+<!--			<groupId>commons-lang</groupId>-->
+<!--			<artifactId>commons-lang</artifactId>-->
+<!--			<version>2.6</version>-->
+<!--		</dependency>-->
+		<dependency>
+			<groupId>com.google.guava</groupId>
+			<artifactId>guava</artifactId>
+			<version>32.0.0-jre</version>
+		</dependency>
+
+		<dependency>
+			<groupId>com.atlassian.annotations</groupId>
+			<artifactId>atlassian-annotations</artifactId>
+			<version>5.0.0</version>
+			<scope>provided</scope>
+		</dependency>
+
+
+	</dependencies>
+	<repositories>
+		<repository>
+			<id>atlassian-public</id>
+			<url>https://maven.atlassian.com/repository/public</url>
+			<snapshots>
+				<enabled>true</enabled>
+				<updatePolicy>never</updatePolicy>
+				<checksumPolicy>warn</checksumPolicy>
+			</snapshots>
+			<releases>
+				<enabled>true</enabled>
+				<checksumPolicy>warn</checksumPolicy>
+			</releases>
+		</repository>
+	</repositories>
+	<build>
+		<plugins>
+			<plugin>
+				<groupId>com.atlassian.maven.plugins</groupId>
+				<artifactId>bitbucket-maven-plugin</artifactId>
+				<version>${amps.version}</version>
+				<extensions>true</extensions>
+				<configuration>
+					<products>
+						<product>
+							<id>bitbucket</id>
+							<instanceId>bitbucket</instanceId>
+							<version>${bitbucket.version}</version>
+							<dataVersion>${bitbucket.data.version}</dataVersion>
+						</product>
+					</products>
+					<!--<instructions> <Atlassian-Plugin-Key>${atlassian.plugin.key}</Atlassian-Plugin-Key>
+						&lt;!&ndash; Add package import here &ndash;&gt; <Import-Package> org.springframework.osgi.*;resolution:="optional",
+						org.eclipse.gemini.blueprint.*;resolution:="optional", * </Import-Package>
+						&lt;!&ndash; Ensure plugin is Spring powered &ndash;&gt; <Spring-Context>*</Spring-Context>
+						</instructions> -->
+				</configuration>
+			</plugin>
+
+			<plugin>
+				<groupId>com.atlassian.plugin</groupId>
+				<artifactId>atlassian-spring-scanner-maven-plugin</artifactId>
+				<version>1.2.6</version>
+				<executions>
+					<execution>
+						<goals>
+							<goal>atlassian-spring-scanner</goal>
+						</goals>
+						<phase>process-classes</phase>
+					</execution>
+				</executions>
+				<configuration>
+					<scannedDependencies>
+						<dependency>
+							<groupId>com.atlassian.plugin</groupId>
+							<artifactId>atlassian-spring-scanner-external-jar</artifactId>
+						</dependency>
+					</scannedDependencies>
+					<verbose>false</verbose>
+				</configuration>
+			</plugin>
+
+			<plugin>
+				<groupId>org.apache.maven.plugins</groupId>
+				<artifactId>maven-compiler-plugin</artifactId>
+				<version>3.3</version>
+				<configuration>
+					<source>1.8</source>
+					<target>1.8</target>
+				</configuration>
+			</plugin>
+
+
+
+		</plugins>
+	</build>
+
+	<properties>
+		<bitbucket.version>5.5.0</bitbucket.version>
+		<bitbucket.data.version>5.5.0</bitbucket.data.version>
+		<amps.version>6.2.6</amps.version>
+		<plugin.testrunner.version>1.2.3</plugin.testrunner.version>
+		<atlassian.spring.scanner.version>1.2.6</atlassian.spring.scanner.version>
+		<!-- This key is used to keep the consistency between the key in atlassian-plugin.xml
+            and the key to generate bundle. -->
+		<atlassian.plugin.key>${project.groupId}.${project.artifactId}</atlassian.plugin.key>
+	</properties>
+
+	<description>Boost Atlassian Security with Bitbucket SAML Single Sign On (SSO) + User Sync (SCIM). Supports Okta, ADFS, Azure AD, Google Apps, OneLogin and all SAML compliant IDPs.</description>
+</project>
