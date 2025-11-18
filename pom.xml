@@ -1,560 +1,1554 @@
-<?xml version="1.0" encoding="UTF-8"?>
-<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-		 xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/maven-v4_0_0.xsd">
+package com.miniorange.sso.saml.bitbucket.servlet;
 
-	<modelVersion>4.0.0</modelVersion>
-	<groupId>com.miniorange.sso.saml</groupId>
-	<artifactId>bitbucket-sso</artifactId>
-	<version>2.1.14</version>
+import java.io.IOException;
+import java.io.StringReader;
+import java.io.UnsupportedEncodingException;
+import java.net.URLDecoder;
+import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
+import java.util.*;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+import java.util.regex.PatternSyntaxException;
 
-	<organization>
-		<name>miniOrange</name>
-		<url>https://www.miniorange.com/</url>
-	</organization>
+import javax.crypto.Cipher;
+import javax.servlet.ServletException;
+import javax.servlet.http.Cookie;
+import javax.servlet.http.HttpServlet;
+import javax.servlet.http.HttpSession;
+import javax.servlet.http.HttpServletRequest;
+import javax.servlet.http.HttpServletResponse;
+import javax.xml.parsers.DocumentBuilderFactory;
 
-	<name>Single Sign On (SSO) for Bitbucket SAML</name>
-	<packaging>atlassian-plugin</packaging>
+import com.atlassian.annotations.security.UnrestrictedAccess;
+import com.atlassian.bitbucket.license.LicenseService;
+import com.atlassian.bitbucket.user.*;
+import com.atlassian.crowd.embedded.api.Directory;
+import com.atlassian.crowd.embedded.api.PasswordCredential;
+import com.atlassian.crowd.exception.DirectoryNotFoundException;
+import com.atlassian.crowd.manager.directory.DirectoryManager;
+import com.atlassian.crowd.manager.directory.SynchronisationMode;
+import com.atlassian.crowd.model.user.UserTemplate;
+import com.atlassian.json.jsonorg.JSONObject;
+import com.atlassian.sal.api.ApplicationProperties;
+import com.miniorange.sso.saml.bitbucket.MoPluginConstants;
+import com.miniorange.sso.saml.dto.MoIDPConfig;
+import org.apache.commons.lang3.BooleanUtils;
+import org.apache.commons.lang3.StringEscapeUtils;
+//import org.apache.commons.lang.StringEscapeUtils;
+import org.apache.commons.lang3.exception.ExceptionUtils;
+import org.apache.commons.lang3.StringUtils;
+import org.apache.commons.logging.Log;
+import org.apache.commons.logging.LogFactory;
+import org.opensaml.saml2.core.Assertion;
+import org.opensaml.saml2.core.Response;
+import org.opensaml.xml.util.Base64;
+import org.springframework.web.util.HtmlUtils;
+import org.w3c.dom.Node;
+import org.w3c.dom.bootstrap.DOMImplementationRegistry;
+import org.w3c.dom.ls.DOMImplementationLS;
+import org.w3c.dom.ls.LSSerializer;
+import org.xml.sax.InputSource;
 
-	<dependencyManagement>
-		<dependencies>
-			<dependency>
-				<groupId>com.atlassian.bitbucket.server</groupId>
-				<artifactId>bitbucket-parent</artifactId>
-				<version>${bitbucket.version}</version>
-				<type>pom</type>
-				<scope>import</scope>
-			</dependency>
-		</dependencies>
-	</dependencyManagement>
+import com.atlassian.bitbucket.permission.Permission;
+import com.atlassian.bitbucket.util.Page;
+import com.atlassian.bitbucket.util.PageRequest;
+import com.atlassian.bitbucket.util.PageRequestImpl;
+import com.atlassian.bitbucket.util.UncheckedOperation;
+import com.atlassian.crowd.exception.GroupNotFoundException;
+import com.atlassian.crowd.exception.OperationFailedException;
+import com.atlassian.crowd.exception.OperationNotPermittedException;
+import com.atlassian.crowd.exception.UserNotFoundException;
+import com.atlassian.sal.api.user.UserManager;
+import com.atlassian.templaterenderer.TemplateRenderer;
+import com.miniorange.sso.saml.MoSAMLException;
+import com.miniorange.sso.saml.MoSAMLResponse;
+import com.miniorange.sso.saml.bitbucket.MoPluginHandler;
+import com.miniorange.sso.saml.bitbucket.MoSAMLManager;
+import com.miniorange.sso.saml.bitbucket.MoSAMLSettings;
+import com.miniorange.sso.saml.utils.MoEncryptionUtils;
+import com.miniorange.sso.saml.utils.MoHttpUtils;
+import com.miniorange.sso.saml.utils.MoSAMLUtils;
+import com.miniorange.sso.saml.utils.MoUncheckedOperation;
+import org.apache.commons.lang3.StringEscapeUtils;
+import static com.atlassian.crowd.embedded.api.OperationType.CREATE_USER;
 
-	<dependencies>
+@UnrestrictedAccess
+public class MoSAMLLoginServlet extends HttpServlet {
 
-		<!-- dependency to make plugin use atlassain license -->
+	private static Log LOGGER = LogFactory.getLog(MoSAMLLoginServlet.class);
+	private MoSAMLSettings settings;
+	private MoSAMLManager samlManager;
+	private MoPluginHandler moPluginHandler;
+	private UserService userService;
+	private UserAdminService userAdminService;
+	private UserManager userManager;
+	private SecurityService securityService;
+	private final TemplateRenderer renderer;
+	private MoIDPConfig idpConfig;
+	private LicenseService licenseService;
+	private String setup;
+	private ApplicationProperties applicationProperties;
+	private DirectoryManager directoryManager;
 
-		<!-- https://mvnrepository.com/artifact/com.atlassian.seraph/atlassian-seraph
-			<dependency> <groupId>com.atlassian.seraph</groupId> <artifactId>atlassian-seraph</artifactId>
-			<version>3.1.1</version> <scope>provided</scope> </dependency> -->
-
-		<!-- https://mvnrepository.com/artifact/com.atlassian.scheduler/atlassian-scheduler-api -->
-		<dependency>
-			<groupId>com.atlassian.scheduler</groupId>
-			<artifactId>atlassian-scheduler-api</artifactId>
-			<version>1.7.0</version>
-			<scope>provided</scope>
-		</dependency>
-
-
-		<!-- https://mvnrepository.com/artifact/org.json/json -->
-		<dependency>
-			<groupId>org.json</groupId>
-			<artifactId>json</artifactId>
-			<version>20231013</version>
-		</dependency>
-
-		<dependency>
-			<groupId>com.atlassian.upm</groupId>
-			<artifactId>licensing-api</artifactId>
-			<version>2.21.4</version>
-			<scope>provided</scope>
-		</dependency>
-
-		<dependency>
-			<groupId>com.atlassian.upm</groupId>
-			<artifactId>upm-api</artifactId>
-			<version>2.21</version>
-			<scope>provided</scope>
-		</dependency>
-		<!--End -->
-
-		<dependency>
-			<groupId>com.atlassian.templaterenderer</groupId>
-			<artifactId>atlassian-template-renderer-api</artifactId>
-			<version>1.1.1</version>
-			<scope>provided</scope>
-		</dependency>
-
-		<dependency>
-			<groupId>com.opencsv</groupId>
-			<artifactId>opencsv</artifactId>
-			<version>5.9</version>
-			<exclusions>
-				<exclusion>
-					<groupId>commons-beanutils</groupId>
-					<artifactId>commons-beanutils</artifactId>
-				</exclusion>
-			</exclusions>
-		</dependency>
-
-		<dependency>
-			<groupId>commons-beanutils</groupId>
-			<artifactId>commons-beanutils</artifactId>
-			<version>1.11.0</version>
-		</dependency>
-
-		<dependency>
-			<groupId>com.google.code.gson</groupId>
-			<artifactId>gson</artifactId>
-			<version>2.10.1</version>
-		</dependency>
-
-		<dependency>
-			<groupId>com.atlassian.activeobjects</groupId>
-			<artifactId>activeobjects-plugin</artifactId>
-			<version>3.6.3</version>
-			<scope>provided</scope>
-		</dependency>
-
-
-		<dependency>
-			<groupId>com.atlassian.sal</groupId>
-			<artifactId>sal-api</artifactId>
-			<version>3.0.7</version>
-			<scope>provided</scope>
-		</dependency>
-		<dependency>
-			<groupId>com.atlassian.bitbucket.server</groupId>
-			<artifactId>bitbucket-api</artifactId>
-			<version>5.11.0</version>
-			<scope>provided</scope>
-		</dependency>
-		<dependency>
-			<groupId>com.atlassian.bitbucket.server</groupId>
-			<artifactId>bitbucket-spi</artifactId>
-			<scope>provided</scope>
-		</dependency>
-		<dependency>
-			<groupId>com.atlassian.bitbucket.server</groupId>
-			<artifactId>bitbucket-page-objects</artifactId>
-			<scope>provided</scope>
-			<exclusions>
-				<exclusion>
-					<groupId>org.bouncycastle</groupId>
-					<artifactId>bcprov-jdk15on</artifactId>
-				</exclusion>
-				<exclusion>
-					<groupId>commons-codec</groupId>
-					<artifactId>commons-codec</artifactId>
-				</exclusion>
-			</exclusions>
-		</dependency>
-		<dependency>
-			<groupId>javax.servlet</groupId>
-			<artifactId>javax.servlet-api</artifactId>
-			<scope>provided</scope>
-		</dependency>
-		<dependency>
-			<groupId>junit</groupId>
-			<artifactId>junit</artifactId>
-			<version>4.10</version>
-			<scope>test</scope>
-		</dependency>
-		<dependency>
-			<groupId>commons-lang</groupId>
-			<artifactId>commons-lang</artifactId>
-			<version>2.6</version>
-			<scope>provided</scope>
-		</dependency>
-
-		<dependency>
-			<groupId>com.atlassian.plugin</groupId>
-			<artifactId>atlassian-spring-scanner-annotation</artifactId>
-			<version>${atlassian.spring.scanner.version}</version>
-			<scope>compile</scope>
-		</dependency>
-
-		<dependency>
-			<groupId>com.atlassian.plugin</groupId>
-			<artifactId>atlassian-spring-scanner-runtime</artifactId>
-			<version>${atlassian.spring.scanner.version}</version>
-			<scope>runtime</scope>
-		</dependency>
+	public MoSAMLLoginServlet(MoSAMLSettings settings, MoSAMLManager samlManager, MoPluginHandler moPluginHandler, ApplicationProperties applicationProperties,
+							  UserService userService, UserManager userManager, UserAdminService userAdminService,
+							  SecurityService securityService, TemplateRenderer renderer,MoIDPConfig idpConfig,LicenseService licenseService, DirectoryManager directoryManager) {
+		this.settings = settings;
+		this.samlManager = samlManager;
+		this.moPluginHandler = moPluginHandler;
+		this.userService = userService;
+		this.userManager = userManager;
+		this.userAdminService = userAdminService;
+		this.securityService = securityService;
+		this.renderer = renderer;
+		this.idpConfig=idpConfig;
+		this.licenseService = licenseService;
+		this.directoryManager = directoryManager;
+		this.applicationProperties = applicationProperties;
+	}
 
 
-		<dependency>
-			<groupId>javax.inject</groupId>
-			<artifactId>javax.inject</artifactId>
-			<version>1</version>
-			<scope>provided</scope>
-		</dependency>
+	public static String getGroupnameFromRegexMethod(String groupRegexPattern,String regexGroups,String groupName){
+		LOGGER.debug("Applying regex pattern on Groupname : "+groupName);
+		Pattern pattern = Pattern.compile(StringUtils.trimToEmpty(groupRegexPattern));
+		Matcher matcher = pattern.matcher(groupName);
+		if (matcher.find()) {
+			groupName = StringUtils.EMPTY;
+			LOGGER.debug("Matched Groups "+matcher.groupCount());
+			if (matcher.groupCount() > 0) {
+				groupName=MoPluginHandler.getGroupNameFromRegex(matcher,StringUtils.trimToEmpty(regexGroups));
+			} else {
+				groupName=matcher.group();
+			}
+		}
+		return groupName;
+	}
 
-		<!-- WIRED TEST RUNNER DEPENDENCIES -->
-		<dependency>
-			<groupId>com.atlassian.plugins</groupId>
-			<artifactId>atlassian-plugins-osgi-testrunner</artifactId>
-			<version>${plugin.testrunner.version}</version>
-			<scope>test</scope>
-		</dependency>
+	private void showTestGroupRegexWindow(HttpServletRequest request, HttpServletResponse response)throws IOException{
+		LOGGER.debug("testing regex pattern...");
+		StringBuilder output = new StringBuilder("<div style='display:none'>");
+		String regexp = request.getParameter("regexp");
+		String groupName = request.getParameter("groupName");
+		Boolean result = Boolean.FALSE;
+		regexp = StringEscapeUtils.escapeEcmaScript(regexp);
+		LOGGER.debug("Check if regex is valid : "+ isRegexValid(regexp));
+		String message = "TEST REGEX....!";
+		message = HtmlUtils.htmlEscape(message);
+		output.append(message);
 
-		<dependency>
-			<groupId>org.jsoup</groupId>
-			<artifactId>jsoup</artifactId>
-			<version>1.8.3</version>
-			<scope>provided</scope>
-		</dependency>
+		if (StringUtils.isNotEmpty(regexp) && StringUtils.isNotEmpty((groupName)) && isRegexValid(regexp)) {
+			result = isPatternFound(regexp, groupName);
+		}
 
-		<dependency>
-			<groupId>com.atlassian.plugins</groupId>
-			<artifactId>atlassian-plugins-api</artifactId>
-			<version>4.4.8</version>
-			<scope>provided</scope>
-		</dependency>
+		output.append("</div>");
 
-		<dependency>
-			<groupId>javax.ws.rs</groupId>
-			<artifactId>jsr311-api</artifactId>
-			<version>1.1.1</version>
-			<scope>provided</scope>
-		</dependency>
-		<!-- <dependency> <groupId>com.google.code.gson</groupId> <artifactId>gson</artifactId>
-			<version>2.2.2-atlassian-1</version> </dependency> -->
-		<!-- 		<dependency>
-                    <groupId>com.fasterxml.jackson.core</groupId>
-                    <artifactId>jackson-core</artifactId>
-                    <version>2.7.4</version>
-                </dependency>
+		if(StringUtils.isBlank(regexp)||StringUtils.isBlank((groupName)) || result != true || !isRegexValid(regexp)){
+			output.append("<div style=\"color: #a94442;background-color: #f2dede;padding: 15px;"
+					+ "margin-bottom: 20px;text-align:center;border:1px solid #E6B3B2;font-size:18pt;\">TEST "
+					+ "FAILED</div><div style=\"color: #a94442;font-size:14pt; margin-bottom:20px;\">Error message: <br> ");
+			if (StringUtils.isBlank(regexp))
+				output.append("<li>Regular Expression field can't left blank</li><br>");
+			else if (StringUtils.isBlank(groupName))
+				output.append("<li>Group Name field can't left blank</li><br>");
+			else if(result != true || !isRegexValid(regexp))
+				output.append("<li>Regex not valid for the group name</li><br>");
+			output.append("</div>");
+		}
+		else{
+			output.append("<div style='color: #3c763d;background-color: #dff0d8; padding:2%;margin-bottom:20px;text-align:center; border:1px solid #AEDB9A; font-size:18pt;'>TEST SUCCESSFUL</div>");
+			output.append("<div style='color: #3c763d;font-size:14pt; margin-bottom:20px;'><li>Group name matches regex</li></div>");
+		}
+		response.setContentType("text/html");
+		response.getOutputStream().write(output.toString().getBytes(StandardCharsets.UTF_8));
+		return;
+	}
 
-                <dependency>
-                    <groupId>com.fasterxml.jackson.core</groupId>
-                    <artifactId>jackson-annotations</artifactId>
-                    <version>2.7.4</version>
-                </dependency>
-         -->
-		<dependency>
-			<groupId>com.fasterxml.jackson.core</groupId>
-			<artifactId>jackson-databind</artifactId>
-			<version>2.15.0</version>
-		</dependency>
+	private Boolean isPatternFound(String regexp, String groupName){
+		LOGGER.debug("Inside isPatternFound");
+		Pattern pattern = Pattern.compile(StringUtils.trimToEmpty(regexp));
+		Matcher matcher = pattern.matcher(groupName);
+		if(matcher.find()){
+			return true;
+		}
+		return false;
+	}
 
-		<dependency>
-			<groupId>com.atlassian.json</groupId>
-			<artifactId>atlassian-json-jsonorg</artifactId>
-			<version>0.9</version>
-		</dependency>
+	public void showTestRegexGroupResult(HttpServletRequest request,HttpServletResponse response) throws IOException {
+		StringBuilder output = new StringBuilder("<div style='display:none'>");
+		String regexp = request.getParameter("regexp");
+		String regexg = request.getParameter("regexg");
+		String groupName = request.getParameter("groupName");
+		String result=StringUtils.EMPTY;
+		regexp = org.apache.commons.lang3.StringEscapeUtils.escapeEcmaScript(regexp);
+		regexp = StringEscapeUtils.escapeHtml4(regexp);
+		regexg= org.apache.commons.lang3.StringEscapeUtils.escapeEcmaScript(regexg);
+		regexg= StringEscapeUtils.escapeHtml4(regexg);
+		groupName = org.apache.commons.lang3.StringEscapeUtils.escapeEcmaScript(groupName);
+		groupName = StringEscapeUtils.escapeHtml4(groupName);
 
-		<dependency>
-			<groupId>org.opensaml</groupId>
-			<artifactId>opensaml</artifactId>
-			<version>2.6.5</version>
-			<exclusions>
-				<exclusion>
-					<groupId>xalan</groupId>
-					<artifactId>xalan</artifactId>
-				</exclusion>
-				<exclusion>
-					<groupId>xerces</groupId>
-					<artifactId>xercesImpl</artifactId>
-				</exclusion>
-				<exclusion>
-					<groupId>xalan</groupId>
-					<artifactId>serializer</artifactId>
-				</exclusion>
-				<exclusion>
-					<groupId>xml-resolver</groupId>
-					<artifactId>xml-resolver</artifactId>
-				</exclusion>
-				<exclusion>
-					<groupId>org.apache.velocity</groupId>
-					<artifactId>velocity</artifactId>
-				</exclusion>
-				<exclusion>
-					<groupId>commons-lang</groupId>
-					<artifactId>commons-lang</artifactId>
-				</exclusion>
-				<exclusion>
-					<groupId>ca.juliusdavies</groupId>
-					<artifactId>not-yet-commons-ssl</artifactId>
-				</exclusion>
-				<exclusion>
-					<groupId>org.apache.santuario</groupId>
-					<artifactId>xmlsec</artifactId>
-				</exclusion>
-				<exclusion>
-					<groupId>commons-codec</groupId>
-					<artifactId>commons-codec</artifactId>
-				</exclusion>
-				<exclusion>
-					<groupId>org.bouncycastle</groupId>
-					<artifactId>bcprov-jdk15on</artifactId>
-				</exclusion>
-				<exclusion>
-					<groupId>commons-httpclient</groupId>
-					<artifactId>commons-httpclient</artifactId>
-				</exclusion>
-				<exclusion>
-					<groupId>org.owasp.esapi</groupId>
-					<artifactId>esapi</artifactId>
-				</exclusion>
-			</exclusions>
-		</dependency>
+		if (StringUtils.isNotEmpty(regexg)&&StringUtils.isNotEmpty(regexp)&&StringUtils.isNotEmpty(groupName)) {
+			result = MoSAMLLoginServlet.getGroupnameFromRegexMethod(regexp, regexg, groupName);
+		}
+		output.append("</div>");
+		if (StringUtils.isBlank(regexp)||StringUtils.isBlank(regexg)||StringUtils.isBlank(groupName)){
+			output.append("<div style=\"color: #a94442;background-color: #f2dede;padding: 15px;"
+					+ "margin-bottom: 20px;text-align:center;border:1px solid #E6B3B2;font-size:18pt;\">TEST "
+					+ "FAILED</div><div style=\"color: #a94442;font-size:14pt; margin-bottom:20px;\">Error message: <br> ");
+			if (StringUtils.isBlank(regexp)) {
+				output.append("<li>Regular Expression field can't left blank</li><br>");
+			}
+			if (StringUtils.isBlank(regexg)){
+				output.append("<li>Replace with field can't left blank</li><br>");
+			}
+			if (StringUtils.isBlank(groupName)){
+				output.append("<li>Group Name field can't left blank</li><br>");
+			}
+			output.append("</div>");
+		}
+		else  if (StringUtils.isNotEmpty(result)&&StringUtils.isNotBlank(groupName)) {
+			output.append("<div style='color: #3c763d;background-color: #dff0d8; padding:2%;margin-bottom:20px;text-align:center; border:1px solid #AEDB9A; font-size:18pt;'>" +
+					"Test Regex Result</div>");
+			output.append("<table border=\"1\" style=\"width: 100%;\">\n" +
+					"     <tbody><tr>\n" +
+					"        <th>Actual Value</th>\n" +
+					"        <th>Transformed Value</th>\n" +
+					"    </tr>\n" +
+					"    <tr>\n" +
+					"        <td align=\"center\">"+groupName+"</td>\n" +
+					"        <td align=\"center\">"+result+"</td>\n" +
+					"    </tr>    \n" +
+					"    </tbody></table>");
+		}
+		else if (StringUtils.isEmpty(result)&&StringUtils.isNotBlank(groupName))
+		{
+			output.append("<div style=\"color: #a94442;background-color: #f2dede;padding: 15px;"
+					+ "margin-bottom: 20px;text-align:center;border:1px solid #E6B3B2;font-size:18pt;\">TEST "
+					+ "FAILED</div><div style=\"color: #a94442;font-size:14pt; margin-bottom:20px;\">Error message: <br> ");
+			output.append("<li>Regex not valid for the group Name.</li><br>");
+			output.append("</div>");
+		}
 
+		output.append("<div style=\"margin:3%;display:block;text-align:center;\"><input style=\"padding:1%;"
+				+ "width:100px;background: #0091CD none repeat scroll 0% 0%;cursor: pointer;font-size:15px;"
+				+ "border-width: 1px;border-style: solid;border-radius: 3px;white-space: nowrap;"
+				+ "box-sizing:border-box;border-color: #0073AA;box-shadow:0px 1px 0px rgba(120,200,230,0.6) inset;"
+				+ "color: #FFF;\" type=\"button\" value=\"Done\" onClick=\"self.close();\"></div>");
+		response.setContentType("text/html");
+		response.getOutputStream().write(output.toString().getBytes("UTF-8"));
 
-		<!--<dependency> <groupId>org.opensaml</groupId> <artifactId>xmltooling</artifactId>
-			<version>1.4.0</version> </dependency> -->
-
-		<!-- <dependency> <groupId>com.atlassian.seraph</groupId> <artifactId>atlassian-seraph</artifactId>
-			<version>2.6.3</version> <scope>provided</scope> </dependency> -->
-		<dependency>
-			<groupId>org.apache.commons</groupId>
-			<artifactId>commons-lang3</artifactId>
-			<scope>provided</scope>
-		</dependency>
-		<dependency>
-			<groupId>org.slf4j</groupId>
-			<artifactId>slf4j-api</artifactId>
-			<scope>provided</scope>
-		</dependency>
-
-		<!-- <dependency> <groupId>xerces</groupId> <artifactId>xercesImpl</artifactId>
-			<version>2.11.0-atlassian-01</version> <scope>provided</scope> </dependency>
-			<dependency> <groupId>xml-resolver</groupId> <artifactId>xml-resolver</artifactId>
-			<version>1.2</version> </dependency> -->
-		<!-- <dependency> <groupId>com.opensymphony</groupId> <artifactId>webwork</artifactId>
-			<version>2.2.6-atlassian-3</version> </dependency> -->
+	}
 
 
-		<!-- https://mvnrepository.com/artifact/net.sf.json-lib/json-lib -->
-		<!-- 	<dependency>
-                <groupId>net.sf.json-lib</groupId>
-                <artifactId>json-lib</artifactId>
-                <version>2.4</version>
-                <classifier>jdk15</classifier>
-            </dependency> -->
-		<!-- https://mvnrepository.com/artifact/commons-collections/commons-collections -->
-		<dependency>
-			<groupId>commons-collections</groupId>
-			<artifactId>commons-collections</artifactId>
-			<version>3.2.2</version>
-		</dependency>
-		<!--<dependency>
-                <groupId>org.apache.struts</groupId>
-                <artifactId>struts2-core</artifactId>
-                <version>2.5.13</version>
-        </dependency>-->
+	@Override
+	public void doGet(HttpServletRequest request, HttpServletResponse response)
+			throws UnsupportedEncodingException, IOException {
+		LOGGER.debug("SAML Login Servlet doGet() called...");
 
-		<!-- https://mvnrepository.com/artifact/org.jsoup/jsoup -->
-		<dependency>
-			<groupId>org.jsoup</groupId>
-			<artifactId>jsoup</artifactId>
-			<version>1.15.3</version>
-		</dependency>
+		String returnTo = request.getParameter("return_to");
+		returnTo = MoSAMLUtils.sanitizeText(returnTo);
 
-		<dependency>
-			<groupId>com.atlassian.crowd</groupId>
-			<artifactId>crowd-api</artifactId>
-			<version>3.3.3</version>
-			<scope>provided</scope>
-			<exclusions>
-				<exclusion>
-					<groupId>commons-codec</groupId>
-					<artifactId>commons-codec</artifactId>
-				</exclusion>
-			</exclusions>
-		</dependency>
+		String title = request.getParameter("title");
+		if (StringUtils.isBlank(returnTo)) {
+			returnTo = settings.getDashboardUrl();
+		}
+		else {
+			if (!StringUtils.isBlank(title) && title != null) {
+				StringBuffer returnToUrl = new StringBuffer();
+				returnToUrl.append(returnTo).append("&").append("title").append("=");
+				returnToUrl.append(title);
+				returnTo = URLEncoder.encode(returnToUrl.toString(), StandardCharsets.UTF_8.toString());
+			}
+		}
+		LOGGER.debug("returnTo : "+ returnTo);
 
-		<dependency>
-			<groupId>com.atlassian.crowd</groupId>
-			<artifactId>embedded-crowd-core</artifactId>
-			<version>2.8.3</version>
-			<scope>provided</scope>
-			<exclusions>
-				<exclusion>
-					<groupId>commons-codec</groupId>
-					<artifactId>commons-codec</artifactId>
-				</exclusion>
-			</exclusions>
-		</dependency>
+		if (StringUtils.contains(returnTo, "testregex")) {
+			StringBuilder output = new StringBuilder("<div style='display:none'>");
+			String regexp = request.getParameter("regexp");
+			regexp = StringEscapeUtils.escapeEcmaScript(regexp);
+			regexp = StringEscapeUtils.escapeHtml4(regexp);
 
-		<dependency>
-			<groupId>com.amazonaws</groupId>
-			<artifactId>aws-java-sdk-cognitoidp</artifactId>
-			<version>1.12.353</version>
-			<exclusions>
-				<exclusion>
-					<groupId>commons-codec</groupId>
-					<artifactId>commons-codec</artifactId>
-				</exclusion>
-				<exclusion>
-					<groupId>software.amazon.ion</groupId>
-					<artifactId>ion-java</artifactId>
-				</exclusion>
-			</exclusions>
-		</dependency>
-		<dependency>
-			<groupId>com.atlassian.bitbucket.server</groupId>
-			<artifactId>bitbucket-rest-api</artifactId>
-			<version>5.5.0</version>
-		</dependency>
+			String message = "TEST REGEX....!";
+			message = HtmlUtils.htmlEscape(message);
 
-		<!-- Added by Lokesh -->
-		<!-- https://mvnrepository.com/artifact/ca.juliusdavies/not-yet-commons-ssl -->
-<!--		<dependency>-->
-<!--			<groupId>ca.juliusdavies</groupId>-->
-<!--			<artifactId>not-yet-commons-ssl</artifactId>-->
-<!--			<version>0.3.11</version>-->
-<!--		</dependency>-->
+			output.append(message);
+			output.append("</div>");
+			output.append(
+					"<div style='color: #3c763d;background-color: #dff0d8; padding:2%;margin-bottom:20px;text-align:center; " +
+							"border:1px solid #AEDB9A; font-size:18pt;'>Test Regex Pattern</div>");
+			output.append(
+					"<div id=\"testregex\"> <input type=\"text\"  id=\"attrvalue\" name=\"attrvalue\" placeholder=\"Enter Attribute Value\" " +
+							"class=\"text long-field\"  style=\"width:250px;padding:10px; margin-left:20px\"/>&nbsp;&nbsp;&nbsp;"
+							+ "<label id=\"result\"/><label id=\"error\"/></div><br><br>");
+			output.append("<div style=\"margin:3%;display:block;\"><input id =\"testregex-button\" style=\"padding:1%;"
+					+ "width:150px;background: #0091CD none repeat scroll 0% 0%;cursor: pointer;font-size:15px;"
+					+ "border-width: 1px;border-style: solid;border-radius: 3px;white-space: nowrap;"
+					+ "box-sizing:border-box;border-color: #0073AA;box-shadow:0px 1px 0px rgba(120,200,230,0.6) inset;"
+					+ "color: #FFF;\" type=\"button\" value=\"Test Regex\"></div>");
+			output.append("<script>"
+					+ "var input = document.getElementById(\"attrvalue\");"
+					+ "input.addEventListener(\"keyup\", function(event) {"
+					+ "if (event.keyCode === 13) {"
+					+ "document.getElementById(\"testregex-button\").click();"
+					+ "}"
+					+ "});"
+					+ "document.querySelector(\"#testregex-button\").onclick = function() {"
+					+ "var attrValue = document.querySelector(\"#attrvalue\").value;" + "var regexp ='" + MoSAMLUtils.sanitizeText(regexp) + "';"
+					+ "console.log('original: '+regexp);" + "if(" + isRegexValid(regexp) + ")" + "{"
+					+ "console.log('Escaped: '+regexp);" + "var regExp = new RegExp(regexp, 'g');"
+					+ "var result = regExp.exec(attrValue);" + " var username = '';" + "if (result && result!=\"\") {"
+					+ "if(result.length>1){" + "var length = result.length;"
+					+ "for(var count = 1; count < length; count++){" + "console.log('Multiple Groups'); "
+					+ "console.log(result[count]);" + "username += result[count];" + "}" + "}" + "else{"
+					+ "console.log('No groups '+result);" + "username = result[0];" + "}"
+					+ "console.log(\"Result...:\" + username);"
+					+ "document.querySelector(\"#result\").innerHTML = username;}"
 
-		<!-- https://mvnrepository.com/artifact/org.apache.santuario/xmlsec -->
-		<dependency>
-			<groupId>org.apache.santuario</groupId>
-			<artifactId>xmlsec</artifactId>
-			<version>3.0.3</version>
-			<exclusions>
-				<exclusion>
-					<groupId>commons-codec</groupId>
-					<artifactId>commons-codec</artifactId>
-				</exclusion>
-			</exclusions>
-		</dependency>
+					+ "else { document.querySelector(\"#result\").innerHTML = \"Error : No Pattern Found.\"; }" + "}"
+					+ " else { document.querySelector(\"#error\").innerHTML = \"Invalid Regex Expression.\";}"
 
-		<!-- https://mvnrepository.com/artifact/org.bouncycastle/bcprov-jdk15on -->
-		<dependency>
-			<groupId>org.bouncycastle</groupId>
-			<artifactId>bcmail-jdk18on</artifactId>
-			<version>1.79</version>
-		</dependency>
+					+ "}</script>");
+			response.setContentType("text/html");
+			response.getOutputStream().write(output.toString().getBytes("UTF-8"));
+			return;
+		}
 
-		<dependency>
-			<groupId>org.apache.httpcomponents</groupId>
-			<artifactId>httpclient</artifactId>
-			<version>4.5.13</version>
-			<scope>provided</scope>
-			<exclusions>
-				<exclusion>
-					<groupId>commons-codec</groupId>
-					<artifactId>commons-codec</artifactId>
-				</exclusion>
-			</exclusions>
-		</dependency>
+		if(StringUtils.contains(returnTo, "testgroupregexcreate")){
+			LOGGER.debug("test group regex create call...");
+			showTestRegexGroupResult(request, response);
+			return;
+		}
 
-		<!-- https://mvnrepository.com/artifact/commons-codec/commons-codec -->
-		<dependency>
-			<groupId>commons-codec</groupId>
-			<artifactId>commons-codec</artifactId>
-			<version>1.15</version>
-		</dependency>
+		if(StringUtils.contains(returnTo, "testgroupregex")){
+			LOGGER.debug("test group regex call...");
+			showTestGroupRegexWindow(request, response);
+			return;
+		}
 
-		<!--&lt;!&ndash; https://mvnrepository.com/artifact/commons-httpclient/commons-httpclient &ndash;&gt;
-		<dependency>
-			<groupId>commons-httpclient</groupId>
-			<artifactId>commons-httpclient</artifactId>
-			<version>3.1-atlassian-2</version>
-		</dependency>-->
+		String idpID = request.getParameter("idp");
+		this.setup = request.getParameter("setup");
+
+		// Select first IDP in case the IDP ID is not mentioned
+		if (StringUtils.isBlank(idpID) && !settings.getSsoEnabledForIdPList().isEmpty()) {
+			idpID = settings.getSsoEnabledForIdPList().get(0);
+		}
+
+		HttpSession session = request.getSession();
+		session.setAttribute("idpId", idpID);
+		Cookie idpIdCookie = MoHttpUtils.createCookie(request.getRequestURL().toString(), MoPluginConstants.IDP_ID_COOKIE, idpID, true, settings.getRememberMeCookieEnabled());
+		MoHttpUtils.addCookie(response, idpIdCookie);
+
+		if (StringUtils.isNotBlank(idpID)) {
+			try {
+				this.idpConfig = MoPluginHandler.constructIdpConfigObject(idpID);
+			} catch (NullPointerException e) {
+				LOGGER.error("doGet Error Occurred while generating saml request " + e.getMessage());
+				LOGGER.error(ExceptionUtils.getStackTrace(e));
+			}
+		}
 
 
-		<!--<dependency>
-			<groupId>org.owasp.esapi</groupId>
-			<artifactId>esapi</artifactId>
-			<version>2.5.1.0</version>
-			<scope>provided
-			</scope>
-		</dependency>-->
-		<dependency>
-			<groupId>commons-lang</groupId>
-			<artifactId>commons-lang</artifactId>
-			<version>2.6</version>
-		</dependency>
-		<dependency>
-			<groupId>com.google.guava</groupId>
-			<artifactId>guava</artifactId>
-			<version>32.0.0-jre</version>
-		</dependency>
+		if (idpConfig == null || StringUtils.isBlank(idpConfig.getId())) {
+			LOGGER.error("doGet Error Occurred while generating saml request. Error_CODE: IDP_ID_INVALID");
+			redirectToLoginWithSAMLError(response, null, "cant_send_request");
+			return;
+		}
 
-		<dependency>
-			<groupId>com.atlassian.annotations</groupId>
-			<artifactId>atlassian-annotations</artifactId>
-			<version>5.0.0</version>
-			<scope>provided</scope>
-		</dependency>
+		ArrayList<String> enabledIdps = settings.getSsoEnabledForIdPList();
+		if (!enabledIdps.contains(idpConfig.getId())&& ! returnTo.equals("testidpconfiguration")) {
+			LOGGER.debug("SSO is not enabled for this IDP: " + idpConfig.getId());
+			redirectToLoginWithSAMLError(response, null, "sso_not_enabled_for_idp");
+			return;
+		}
 
 
-	</dependencies>
-	<repositories>
-		<repository>
-			<id>atlassian-public</id>
-			<url>https://maven.atlassian.com/repository/public</url>
-			<snapshots>
-				<enabled>true</enabled>
-				<updatePolicy>never</updatePolicy>
-				<checksumPolicy>warn</checksumPolicy>
-			</snapshots>
-			<releases>
-				<enabled>true</enabled>
-				<checksumPolicy>warn</checksumPolicy>
-			</releases>
-		</repository>
-	</repositories>
-	<build>
-		<plugins>
-			<plugin>
-				<groupId>com.atlassian.maven.plugins</groupId>
-				<artifactId>bitbucket-maven-plugin</artifactId>
-				<version>${amps.version}</version>
-				<extensions>true</extensions>
-				<configuration>
-					<products>
-						<product>
-							<id>bitbucket</id>
-							<instanceId>bitbucket</instanceId>
-							<version>${bitbucket.version}</version>
-							<dataVersion>${bitbucket.data.version}</dataVersion>
-						</product>
-					</products>
-					<!--<instructions> <Atlassian-Plugin-Key>${atlassian.plugin.key}</Atlassian-Plugin-Key>
-						&lt;!&ndash; Add package import here &ndash;&gt; <Import-Package> org.springframework.osgi.*;resolution:="optional",
-						org.eclipse.gemini.blueprint.*;resolution:="optional", * </Import-Package>
-						&lt;!&ndash; Ensure plugin is Spring powered &ndash;&gt; <Spring-Context>*</Spring-Context>
-						</instructions> -->
-				</configuration>
-			</plugin>
+		Boolean isConfigured = StringUtils.isNotBlank(idpConfig.getSsoUrl());
+		if (isConfigured) {
+			/*code added for "view SAML request" functionality*/
+			String samlRequest=samlManager.getTestAuthnRequest(idpConfig);
+			if (StringUtils.containsIgnoreCase(returnTo, "displaysamlrequest")) {
+				try {
+					samlRequest=samlManager.getTestAuthnRequest(idpConfig);
+					displaySamlRequest(request, response, samlRequest, "");
+					return;
+				} catch (Exception ex) {
+					LOGGER.error("Exception in Displaying Saml Request " + ex);
+				}
+			}
 
-			<plugin>
-				<groupId>com.atlassian.plugin</groupId>
-				<artifactId>atlassian-spring-scanner-maven-plugin</artifactId>
-				<version>1.2.6</version>
-				<executions>
-					<execution>
-						<goals>
-							<goal>atlassian-spring-scanner</goal>
-						</goals>
-						<phase>process-classes</phase>
-					</execution>
-				</executions>
-				<configuration>
-					<scannedDependencies>
-						<dependency>
-							<groupId>com.atlassian.plugin</groupId>
-							<artifactId>atlassian-spring-scanner-external-jar</artifactId>
-						</dependency>
-					</scannedDependencies>
-					<verbose>false</verbose>
-				</configuration>
-			</plugin>
-
-			<plugin>
-				<groupId>org.apache.maven.plugins</groupId>
-				<artifactId>maven-compiler-plugin</artifactId>
-				<version>3.3</version>
-				<configuration>
-					<source>1.8</source>
-					<target>1.8</target>
-				</configuration>
-			</plugin>
+			if (!StringUtils.isBlank(idpConfig.getRelayState()) && idpConfig.getRelayStateRedirectionType().equals(MoPluginConstants.FORCE_REDIRECT)) {
+				if (!returnTo.equals("displaysamlrequest") && !returnTo.equals("displaysamlresponse")
+						&& !returnTo.equals("testidpconfiguration")) {
+					/*// Authentication Request for single sign on*/
+					returnTo = idpConfig.getRelayState();
+				}
+			}
+			samlManager.createAuthnRequestAndRedirect(request, response, returnTo,idpConfig);
+			//return;
+		}
+	}
 
 
+	@Override
+	public void doPost(HttpServletRequest request, HttpServletResponse response) throws IOException, ServletException {
+		LOGGER.debug("Login Servlet doPost called");
+		try {
 
-		</plugins>
-	</build>
+			/*
+			 * setting cookies to stop built in authentication handler in
+			 * MoBitbucketSAMLHandler
+			 */
+			String status = null;
+			ApplicationUser user = null;
+			Boolean multipleUserWithSameEmail = Boolean.FALSE;
+			LOGGER.debug("SAML Authentication Servlet doPost() called...");
+			MoSAMLResponse samlResponse = null;
+			String relayState = request.getParameter(MoSAMLUtils.RELAY_STATE_PARAM);
+			relayState = MoSAMLUtils.sanitizeText(relayState);
+			ArrayList<String> enabledIdps;
 
-	<properties>
-		<bitbucket.version>5.5.0</bitbucket.version>
-		<bitbucket.data.version>5.5.0</bitbucket.data.version>
-		<amps.version>6.2.6</amps.version>
-		<plugin.testrunner.version>1.2.3</plugin.testrunner.version>
-		<atlassian.spring.scanner.version>1.2.6</atlassian.spring.scanner.version>
-		<!-- This key is used to keep the consistency between the key in atlassian-plugin.xml
-            and the key to generate bundle. -->
-		<atlassian.plugin.key>${project.groupId}.${project.artifactId}</atlassian.plugin.key>
-	</properties>
+			String idpId = getIdpId(request, response);
 
-	<description>Boost Atlassian Security with Bitbucket SAML Single Sign On (SSO) + User Sync (SCIM). Supports Okta, ADFS, Azure AD, Google Apps, OneLogin and all SAML compliant IDPs.</description>
-</project>
+			if(StringUtils.isBlank(idpId) || !settings.getIdPList().contains(idpId)){
+				redirectToLoginWithSAMLError(response,  null, "cant_find_idp");
+				return;
+			}
+			if(!StringUtils.equals(idpId, idpConfig.getId())) {
+				this.idpConfig = MoPluginHandler.constructIdpConfigObject(idpId);
+			}
+			if (!settings.getEnableSAMLSSO() && !StringUtils.contains(relayState, "testidpconfiguration")) {
+				LOGGER.debug("Bitbucket SSO is Disabled " + idpConfig.getId());
+				redirectToLoginWithSAMLError(response, null, "sso_not_enabled_for_idp");
+				return;
+			}
+
+			enabledIdps = settings.getSsoEnabledForIdPList();
+			if (!enabledIdps.contains(idpId)&& !StringUtils.contains(relayState, "testidpconfiguration")) {
+				LOGGER.debug("SSO is not enabled for this IDP: " + idpId);
+				redirectToLoginWithSAMLError(response, null, "sso_not_enabled_for_idp");
+				return;
+			}
+
+			Boolean isSecure = StringUtils.equalsIgnoreCase("https", request.getScheme()) ? Boolean.TRUE
+					: Boolean.FALSE;
+			Cookie ssoTypeCookie = MoHttpUtils.createCookie(request.getRequestURI(), MoPluginConstants.SSOTYPE_COOKIE,
+					MoEncryptionUtils.encrypt(settings.getCustomerTokenKey(), "SAML"), true, settings.getRememberMeCookieEnabled());
+			ssoTypeCookie.setMaxAge(60);
+			response.addCookie(ssoTypeCookie);
+			/* End */
+
+			try {
+				samlResponse = samlManager.readSAMLResponse(request, response,idpConfig);
+				samlResponse.setRelayStateURL(relayState);
+				LOGGER.debug("group Attributetes = " + idpConfig.getRoleAttribute());
+				LOGGER.debug("Groups recieved = " + Arrays.toString(samlResponse.getAttributes().get(idpConfig.getRoleAttribute())));
+				LOGGER.debug(samlResponse);
+			} catch (MoSAMLException e) {
+				if (StringUtils.contains(relayState, "testidpconfiguration")) {
+					showTestConfigurationResult(null, request, response, e, this.setup);
+					return;
+				}
+				String errorId = UUID.randomUUID().toString();
+				MoPluginHandler.addErrorEvent(request , "Anonymous" ,"SSO" ,e.getErrorCode().getMessage() , e.getErrorCode().getResolution() , errorId);
+				LOGGER.error("Error ID is:" + errorId+ " error message "+ e.getErrorCode().getMessage());
+			}
+
+			if (StringUtils.contains(relayState, "displaysamlresponse")) {
+				displaySamlResponse(request,response, "");
+				return;
+			}
+
+			if (StringUtils.contains(relayState, "testidpconfiguration")) {
+				showTestConfigurationResult(samlResponse, request, response, null, this.setup);
+				return;
+			}
+
+			if (!settings.isLicenseDefine() || !settings.isValidLicense()) {
+				LOGGER.debug("No Evaluation license installed");
+				redirectToLoginWithSAMLError(response, null, "cant_signin_no_license");
+				return;
+			}
+
+			String username = "";
+			String email = "";
+			if (samlResponse.getAttributes().get(idpConfig.getUsernameAttr()) != null
+					&& samlResponse.getAttributes().get(idpConfig.getUsernameAttr()).length == 1) {
+				username = samlResponse.getAttributes().get(idpConfig.getUsernameAttr())[0];
+			}
+			if (samlResponse.getAttributes().get(idpConfig.getEmailAttr()) != null
+					&& samlResponse.getAttributes().get(idpConfig.getEmailAttr()).length == 1) {
+				email = samlResponse.getAttributes().get(idpConfig.getEmailAttr())[0];
+			}
+
+			LOGGER.debug("Username received: " + username);
+
+			/* check regex */
+			if (idpConfig.getRegexPatternEnabled()) {
+				try {
+					Pattern pattern = Pattern.compile(StringUtils.trimToEmpty(idpConfig.getRegexPattern()));
+					Matcher matcher = pattern.matcher(username);
+					LOGGER.debug(matcher);
+					if (matcher.find()) {
+						username = StringUtils.EMPTY;
+						if (matcher.groupCount() > 0) {
+							for (int i = 1; i <= matcher.groupCount(); i++) {
+								username += matcher.group(i);
+							}
+						} else {
+							username = matcher.group();
+						}
+					}
+				} catch (Exception e) {
+					LOGGER.error("cant_signin_regex_pattern_exception occured"+ExceptionUtils.getStackTrace(e)+ExceptionUtils.getMessage(e));
+					redirectToLoginWithSAMLError(response, null, "cant_signin_regex_pattern_exception");
+				}
+			}
+			if (StringUtils.isNotBlank(username)) {
+				user = null;
+				String usernameFromEmail = StringUtils.EMPTY;
+				if (StringUtils.equalsIgnoreCase(idpConfig.getLoginUserAttribute(), "email")) {
+					request.setAttribute("multipleUserWithSameEmail", "FALSE");
+					request.setAttribute("usernameFromEmail", "");
+					findUserByEmail(email, response, request);
+					usernameFromEmail = request.getAttribute("multipleUserWithSameEmail").toString();
+					multipleUserWithSameEmail = BooleanUtils.toBooleanObject(request.getAttribute("multipleUserWithSameEmail").toString());
+
+					if (multipleUserWithSameEmail) {
+						LOGGER.debug("multiple user found with the same email. Redirecting to login page ");
+						request.setAttribute("multipleUserWithSameEmail", "FALSE");
+						redirectToLoginWithSAMLError(response, null,"cant_signin_check_configuration");
+
+						String errorId = UUID.randomUUID().toString();
+						MoSAMLException.SAMLErrorCode  e =  MoSAMLException.SAMLErrorCode.MULTIPLE_USERS_SAME_EMAIL;
+						moPluginHandler.addErrorEvent(request , username  ,"SSO",e.getMessage() , e.getResolution() , errorId);
+						LOGGER.error("Error ID is:" + errorId);
+						return;
+					}
+					if (StringUtils.isNotEmpty(usernameFromEmail)) {
+						user=userService.findUserByEmail(email);
+					}
+				}
+				else {
+					LOGGER.debug("Searching user by username attribute " + username);
+					user = userService.getUserByName(username);
+				}
+
+				if (user == null) {
+					if (idpConfig.getAllowUserCreation()) {
+						LOGGER.debug("User doesn't exist. Creating New User.");
+						user = tryCreateOrUpdateUser(username, samlResponse, request);
+					}
+					else {
+						LOGGER.debug("New user creation is restricted. Redirecting to Login page");
+
+						MoSAMLException.SAMLErrorCode e = MoSAMLException.SAMLErrorCode.USER_CREATION_DISABLED;
+						String errorID = UUID.randomUUID().toString();
+						LOGGER.debug("Error ID is: " + errorID);
+						LOGGER.debug("User creation is disabled for all the user.");
+						moPluginHandler.addErrorEvent(request , username, "SSO",e.getMessage() , e.getResolution() , errorID);
+						redirectToLoginWithSAMLError(response, null,  "cant_signin_check_configuration");
+						return;
+					}
+				}
+				else {
+					status = updateUserProfile(user.getName(), samlResponse);
+					LOGGER.debug("status:" + status);
+					if (!StringUtils.equalsIgnoreCase(status, "success")) {
+						LOGGER.debug("Status not success");
+						redirectToLoginWithSAMLError(response, null, status);
+						return;
+					}
+				}
+				
+				//Handling this for specific versions as was giving error to unlicensed users and was throwing error - too many redirects
+				//Customer below version 9 of bitbucket was facing this issue.
+				String versionStr = applicationProperties.getVersion();
+				int majorVersion = Integer.parseInt(versionStr.split("\\.")[0]);
+
+				LOGGER.debug("Detected Bitbucket version: " + versionStr);
+
+				if (majorVersion < 9) {
+					// Bitbucket v8 or lower — safe to use plugin redirect
+					if (!licenseService.canLogin(user)) {
+						LOGGER.debug("User cannot login, handling with redirect (v8)");
+						String errorId = UUID.randomUUID().toString();
+						moPluginHandler.addErrorEvent(request, username, "SSO",
+								"User does not have access to Bitbucket",
+								"Please check default application access groups",
+								errorId);
+						redirectToLoginWithSAMLError(response, null, "cant_signin_check_configuration");
+						return;
+					}
+				} else {
+					// Bitbucket v9+ — prevent redirect loop
+					if (!licenseService.canLogin(user)) {
+						LOGGER.debug("User cannot login, handling with inline error (v9+)");
+						String errorId = UUID.randomUUID().toString();
+						moPluginHandler.addErrorEvent(request, username, "SSO",
+								"User does not have access to Bitbucket",
+								"Please check default application access groups",
+								errorId);
+						redirectToLoginWithSAMLError(response, null, "cant_signin_check_configuration");
+						return;
+					}
+				}
+
+
+				if (user != null) {
+					/* Session Code to the username in BitbucketSAMLHandler */
+//					Cookie samlAuthCookie = MoHttpUtils.createCookie(request.getRequestURI().toString(), "SAMLAUTH",
+//							MoEncryptionUtils.encrypt(settings.getCustomerTokenKey(), user.getName()), true, isSecure);
+//					samlAuthCookie.setMaxAge(60);
+//					response.addCookie(samlAuthCookie);
+					LOGGER.debug("set username in the SAMLAuthCookie");
+					/* Session Code to the username in BitbucketSAMLHandler */
+					Cookie samlAuthCookie = MoHttpUtils.createCookie(request.getRequestURI(), MoPluginConstants.SAMLAUTH_COOKIE,
+							MoEncryptionUtils.encrypt(settings.getCustomerTokenKey(), user.getName()), true, settings.getRememberMeCookieEnabled());
+					samlAuthCookie.setMaxAge(60);
+					LOGGER.debug("SAMLAuth cookie created successfully..");
+					response.addCookie(samlAuthCookie);
+
+					LOGGER.debug("set username in session");
+					HttpSession session_username = request.getSession();
+					session_username.setAttribute("username", user.getName());
+
+					Cookie samlCookie = MoHttpUtils.createCookie(request.getRequestURL().toString(), MoPluginConstants.SAMLCOOKIE,
+							MoEncryptionUtils.encrypt(settings.getCustomerTokenKey(),
+									samlResponse.getNameId() + "::" + samlResponse.getSessionIndex()),
+							true, settings.getRememberMeCookieEnabled());
+					response.addCookie(samlCookie);
+					Cookie logoutCookie = MoHttpUtils.createCookie(request.getRequestURL().toString(), MoPluginConstants.LOGOUT_COOKIE,
+							MoEncryptionUtils.encrypt(settings.getCustomerTokenKey(),idpConfig.getId()), false, settings.getRememberMeCookieEnabled());
+					response.addCookie(logoutCookie);
+
+					Cookie userCheckCookie = MoHttpUtils.getCookie("UserCheckCookie", request);
+					boolean userCheckToRememberIDP = false;
+					if (userCheckCookie != null) {
+						userCheckToRememberIDP = Boolean.parseBoolean(userCheckCookie.getValue());
+					}
+
+					if (settings.getRememberMyIdpCookieEnabled()) {
+						if (userCheckToRememberIDP || !settings.getUserConsent()) {
+							Cookie rememberIDPCookie = MoHttpUtils.createCookie(request.getRequestURL().toString(), MoPluginConstants.REMEMBERMYIDP_COOKIE, idpConfig.getId(), false, settings.getRememberMeCookieEnabled());
+							int life = 24 * 3600 * Integer.parseInt(settings.getConfiguredLifeForIdpCookie());
+							rememberIDPCookie.setMaxAge(life);
+							rememberIDPCookie.setPath("/");
+							response.addCookie(rememberIDPCookie);
+						}
+					}
+					redirectToSuccessfulAuthLandingPage(request, response, relayState);
+					moPluginHandler.addSuccessEvent(request , username , "SSO" ,"Login Successful" , "Login");
+
+					return;
+				}
+
+				redirectToLoginWithSAMLError(response, null, "cant_signin_check_configuration");
+				return;
+			}
+		} catch (Exception e) {
+			LOGGER.error("An error occured while verifying the SAML Response.", e);
+
+		}
+		redirectToLoginWithSAMLError(response, null, "cant_signin_check_configuration");
+	}
+
+	private void displaySamlRequest(HttpServletRequest request, HttpServletResponse response, String samlRequest, String setup)throws Exception
+	{
+		StringBuilder output = new StringBuilder(
+				"<html><head><meta http-equiv=\"Content-Type\" content=\"text/html; charset=utf-8\"><head><body><div style='display:none'>");
+		String message=samlRequest;
+		message = XmlFormatter(message);
+
+		JSONObject idpConfigObject = settings.getIdpConfig(idpConfig.getId());
+		idpConfigObject.put("samlRequest", message);
+		settings.setIdpConfig(idpConfigObject, idpConfig.getId());
+
+		message = HtmlUtils.htmlEscape(message);
+
+		output.append(message);
+		output.append("</div>");
+		output.append(
+				"<div style='color: #3c763d;background-color: #dff0d8; padding:2%;margin-bottom:20px;text-align:center; border:1px solid #AEDB9A; font-size:18pt;'>Authentication(SAML) Request</div>");
+		output.append(
+				"<textarea rows='6' cols='100' word-wrap='break-word;' style='width:1062px; margin:0px; height:350px;' id ='reqmessage' readonly>"
+						+ message + "</textarea> ");
+		output.append("<div style=\"margin:3%;display:block;text-align:center;\"><input style=\"padding:1%;"
+				+ "width:100px;background: #0091CD none repeat scroll 0% 0%;cursor: pointer;font-size:15px;"
+				+ "border-width: 1px;border-style: solid;border-radius: 3px;white-space: nowrap;"
+				+ "box-sizing:border-box;border-color: #0073AA;box-shadow:0px 1px 0px rgba(120,200,230,0.6) inset;"
+				+ "color: #FFF;\" type=\"button\" value=\"Done\" onClick=\"self.close();\"></div>");
+		output.append(
+				"<div style=\"margin:3%;display:block;text-align:center;\"><input id =\"copy-button\" style=\"padding:1%;"
+						+ "width:150px;background: #0091CD none repeat scroll 0% 0%;cursor: pointer;font-size:15px;"
+						+ "border-width: 1px;border-style: solid;border-radius: 3px;white-space: nowrap;"
+						+ "box-sizing:border-box;border-color: #0073AA;box-shadow:0px 1px 0px rgba(120,200,230,0.6) inset;"
+						+ "color: #FFF;\" type=\"button\" value=\"Copy to Clipboard\"></div>");
+		output.append(
+				"<div style=\"margin:3%;display:block;text-align:center;\"><input id =\"download-button\" style=\"padding:1%;"
+						+ "width:200px;background: #0091CD none repeat scroll 0% 0%;cursor: pointer;font-size:15px;"
+						+ "border-width: 1px;border-style: solid;border-radius: 3px;white-space: nowrap;"
+						+ "box-sizing:border-box;border-color: #0073AA;box-shadow:0px 1px 0px rgba(120,200,230,0.6) inset;"
+						+ "color: #FFF;\" type=\"button\" value=\"Download SAMLRequest\" onclick=\"downloadRequest()\"></div>");
+		output.append("<script>" + "document.querySelector(\"#copy-button\").onclick = function() {"
+				+ "document.querySelector(\"#reqmessage\").select();" + "document.execCommand('copy');" + "};"
+				+ "</script>");
+		output.append("<script>" + "function downloadRequest() {"
+				+ "var textToWrite = document.getElementById(\"reqmessage\").value;"
+				+ "var blob = new Blob([textToWrite],{" + "type: \"text/xml;charset=utf-8;\"});"
+				+ "var fileNameToSaveAs = \"SAMLRequest.xml\";"
+				+ "var downloadLink = document.createElement(\"a\");" + "downloadLink.download = fileNameToSaveAs;"
+				+ "downloadLink.innerHTML = \"Download File\";" + "if(window.navigator.msSaveOrOpenBlob){"
+				+ "navigator.msSaveBlob(blob, \"SAMLRequest.xml\");}" + "if (window.webkitURL != null){"
+				+ "downloadLink.href = window.webkitURL.createObjectURL(blob);}" + "else{"
+				+ "downloadLink.href = window.URL.createObjectURL(blob);}"
+				+ "downloadLink.onclick = destroyClickedElement;"
+				+ "document.body.appendChild(downloadLink);"
+				+ "downloadLink.style.display = \"none\";"
+				+ "downloadLink.click();}"
+				+ "function destroyClickedElement(event){" + "document.body.removeChild(event.target);" + "}"
+				+ "</script>");
+		if (!StringUtils.equalsIgnoreCase(setup, "quick")) {
+			response.setCharacterEncoding("iso-8859-1");
+			response.setContentType("text/html");
+			response.getOutputStream().write(output.toString().getBytes(StandardCharsets.UTF_8));
+		}
+	}
+
+	private void displaySamlResponse(HttpServletRequest request, HttpServletResponse response, String setup) throws Exception {
+		StringBuilder output = new StringBuilder(
+				"<html><head><meta http-equiv=\"Content-Type\" content=\"text/html; charset=utf-8\"><head><body><div style='display:none'>");
+
+		String encodedSAMLResponse = request.getParameter(MoSAMLUtils.SAML_RESPONSE_PARAM);
+		String xml = new String(Base64.decode(encodedSAMLResponse), "UTF-8");
+		xml = XmlFormatter(xml);
+		output.append(xml);
+
+		JSONObject idpConfigObject = settings.getIdpConfig(idpConfig.getId());
+		idpConfigObject.put("samlResponse", xml);
+		settings.setIdpConfig(idpConfigObject, idpConfig.getId());
+
+
+		xml = HtmlUtils.htmlEscape(xml);
+		output.append("</div>");
+		output.append(
+				"<div style='color: #3c763d;background-color: #dff0d8; padding:2%;margin-bottom:20px;text-align:center; border:1px solid #AEDB9A; font-size:18pt;'>SAML Response</div>");
+		output.append(
+				"<textarea rows='6' cols='100' word-wrap='break-word;' style='width:1062px; margin:0px; height:350px;' id ='reqmessage' readonly>"
+						+ MoSAMLUtils.sanitizeText(xml) + "</textarea> ");
+		output.append("<div style=\"margin:3%;display:block;text-align:center;\"><input style=\"padding:1%;"
+				+ "width:100px;background: #0091CD none repeat scroll 0% 0%;cursor: pointer;font-size:15px;"
+				+ "border-width: 1px;border-style: solid;border-radius: 3px;white-space: nowrap;"
+				+ "box-sizing:border-box;border-color: #0073AA;box-shadow:0px 1px 0px rgba(120,200,230,0.6) inset;"
+				+ "color: #FFF;\" type=\"button\" value=\"Done\" onClick=\"self.close();\"></div>");
+		output.append(
+				"<div style=\"margin:3%;display:block;text-align:center;\"><input id =\"copy-button\" style=\"padding:1%;"
+						+ "width:150px;background: #0091CD none repeat scroll 0% 0%;cursor: pointer;font-size:15px;"
+						+ "border-width: 1px;border-style: solid;border-radius: 3px;white-space: nowrap;"
+						+ "box-sizing:border-box;border-color: #0073AA;box-shadow:0px 1px 0px rgba(120,200,230,0.6) inset;"
+						+ "color: #FFF;\" type=\"button\" value=\"Copy to Clipboard\"></div>");
+		output.append(
+				"<div style=\"margin:3%;display:block;text-align:center;\"><input id =\"download-button\" style=\"padding:1%;"
+						+ "width:200px;background: #0091CD none repeat scroll 0% 0%;cursor: pointer;font-size:15px;"
+						+ "border-width: 1px;border-style: solid;border-radius: 3px;white-space: nowrap;"
+						+ "box-sizing:border-box;border-color: #0073AA;box-shadow:0px 1px 0px rgba(120,200,230,0.6) inset;"
+						+ "color: #FFF;\" type=\"button\" value=\"Download SAMLResponse\" onclick=\"downloadRequest()\"></div>");
+		output.append("<script>" + "document.querySelector(\"#copy-button\").onclick = function() {"
+				+ "document.querySelector(\"#reqmessage\").select();" + "document.execCommand('copy');" + "};"
+				+ "</script>");
+		output.append("<script>" + "function downloadRequest() {"
+				+ "var textToWrite = document.getElementById(\"reqmessage\").value;"
+				+ "var blob = new Blob([textToWrite],{" + "type: \"text/xml;charset=utf-8;\"});"
+				+ "var fileNameToSaveAs = \"SAMLResponse.xml\";"
+				+ "var downloadLink = document.createElement(\"a\");"
+				+ "downloadLink.download = fileNameToSaveAs;" + "downloadLink.innerHTML = \"Download File\";"
+				+ "if(window.navigator.msSaveOrOpenBlob){"
+				+ "navigator.msSaveBlob(blob, \"SAMLResponse.xml\");}" + "if (window.webkitURL != null){"
+				+ "downloadLink.href = window.webkitURL.createObjectURL(blob);}" + "else{"
+				+ "downloadLink.href = window.URL.createObjectURL(blob);}"
+				+ "downloadLink.onclick = destroyClickedElement;"
+				+ "document.body.appendChild(downloadLink);"
+				+ "downloadLink.style.display = \"none\";"
+				+ "downloadLink.click();}"
+				+ "function destroyClickedElement(event){" + "document.body.removeChild(event.target);" + "}"
+				+ "</script>");
+		if (!StringUtils.equalsIgnoreCase(setup, "quick")) {
+			response.setCharacterEncoding("iso-8859-1");
+			response.setContentType("text/html");
+			response.getOutputStream().write(output.toString().getBytes(StandardCharsets.UTF_8));
+		}
+	}
+
+	private void findUserByEmail(String email, HttpServletResponse response, HttpServletRequest request) throws IOException {
+		securityService.withPermission(Permission.SYS_ADMIN, "Find User by Email")
+				.call(new UncheckedOperation<Object>() {
+					public Object perform(){
+						PageRequest pageRequest = new PageRequestImpl(0, PageRequest.MAX_PAGE_LIMIT);
+						UserSearchRequest userSearchRequest = new UserSearchRequest.Builder().filter(email).build();
+						Page<ApplicationUser> users = userService.search(userSearchRequest, pageRequest);
+						LOGGER.debug("Total no of users with this email <" + email + "> address " + users.getSize());
+						try {
+							if (users.getSize() > 1) {
+								LOGGER.debug("multiple_user_found");
+								request.setAttribute("multipleUserWithSameEmail", "TRUE");
+							}else if(users.getSize()==1) {
+								request.setAttribute("usernameFromEmail", userService.findUserByEmail(email).getName());
+							}
+						} catch (Exception e) {
+							LOGGER.error("Exception occured while finding user by email"+ExceptionUtils.getStackTrace(e)+ExceptionUtils.getMessage(e));
+							return null;
+						}
+						return null;
+					}
+				});
+	}
+
+	protected void redirectToSuccessfulAuthLandingPage(HttpServletRequest request, HttpServletResponse response,
+													   String relayState) throws IOException {
+		String redirectUrl = "";
+		if ((redirectUrl == null) || (redirectUrl.equals(""))) {
+			if ((StringUtils.isNotBlank(relayState))) {
+				if (StringUtils.contains(relayState, "://")) {
+					if(settings.isRelayStateDomainValid(idpConfig.getRelayState(), relayState)){
+						relayState = StringUtils.stripEnd(relayState, "/");
+						if (StringUtils.isNotBlank(idpConfig.getRelayState()) &&
+								(idpConfig.getRelayStateRedirectionType().equals(MoPluginConstants.FORCE_REDIRECT) || relayState.equals(settings.getSpBaseUrl())))
+							redirectUrl = idpConfig.getRelayState();
+						else
+							redirectUrl = relayState;
+					}else{
+						redirectUrl = StringUtils.isNotBlank(idpConfig.getRelayState()) ? idpConfig.getRelayState() : settings.getSpBaseUrl();
+					}
+				} else {
+					if(StringUtils.isNotBlank(idpConfig.getRelayState()) && (idpConfig.getRelayStateRedirectionType().equals(MoPluginConstants.FORCE_REDIRECT)
+							|| StringUtils.equals(relayState, "/dashboard")))
+						redirectUrl = idpConfig.getRelayState();
+					else
+						redirectUrl = settings.getSpBaseUrl().concat(relayState);
+				}
+
+			} else {
+				redirectUrl = StringUtils.isNotBlank(idpConfig.getRelayState()) ? idpConfig.getRelayState() : settings.getSpBaseUrl();
+			}
+		}
+		if(StringUtils.contains(redirectUrl,"/login") || (redirectUrl.contains("logout") && !redirectUrl.matches("(.*)/projects/(.*)/logout(.*)")
+				&& !redirectUrl.matches("(.*)/repos/(.*)/logout(.*)"))){
+			redirectUrl=settings.getBaseUrl();
+		}
+		response.sendRedirect(redirectUrl);
+	}
+
+	protected void redirectToLoginWithSAMLError(HttpServletResponse response, Exception exception, String errorMsg)
+			throws IOException {
+		String redirectUrl = settings.getLoginPageUrl() + "?samlerror=" + errorMsg;
+		try {
+			if (BooleanUtils.toBoolean(settings.getEnableErrorMsgTemplate()||
+					(!StringUtils.equals(settings.getDefaultBitbucketIDP(), MoPluginConstants.BITBUCKET_LOGIN_PAGE)
+					&& settings.getBitbucketRedirectionRulesMap().isEmpty()))) {
+				LOGGER.debug("redirectToLoginWithSAMLError : custom error message template enabled");
+				String baseURL = settings.getBaseUrl();
+				Map<String, Object> context = new HashMap();
+				context.put("baseUrl", baseURL);
+				String result = renderer.renderFragment(settings.getErrorMsgTemplate(), context);
+				response.setContentType("text/html;charset=utf-8");
+				response.getWriter().write(result);
+			} else {
+				response.sendRedirect(redirectUrl);
+			}
+		} catch (Exception e) {
+			response.sendRedirect(redirectUrl);
+			LOGGER.debug("Exception in overwritting file ");
+		}
+	}
+
+	public String getRandomPassword() {
+		String SALTCHARS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890";
+		StringBuilder salt = new StringBuilder();
+		Random rnd = new Random();
+		while (salt.length() < 18) {
+			int index = (int) (rnd.nextFloat() * SALTCHARS.length());
+			salt.append(SALTCHARS.charAt(index));
+		}
+		String saltStr = salt.toString();
+		return saltStr;
+
+	}
+
+	private ApplicationUser tryCreateOrUpdateUser(String username, MoSAMLResponse samlResponse, HttpServletRequest request)
+			throws UserNotFoundException, OperationFailedException, GroupNotFoundException,
+			OperationNotPermittedException {
+		try {
+			String password = getRandomPassword();
+			securityService.withPermission(Permission.SYS_ADMIN, "Create User").call(new UncheckedOperation<Object>() {
+				public Object perform() {
+					LOGGER.debug("Creating/Updating user.");
+					String email = StringUtils.EMPTY, fullName = StringUtils.EMPTY;
+					String firstName = StringUtils.EMPTY, lastName = StringUtils.EMPTY;
+					if (samlResponse.getAttributes().get(idpConfig.getEmailAttr()) != null
+							&& samlResponse.getAttributes().get(idpConfig.getEmailAttr()).length == 1) {
+						email = samlResponse.getAttributes().get(idpConfig.getEmailAttr())[0];
+					}
+					if (idpConfig.getUseSeparateNameAttribute()) {
+						if (samlResponse.getAttributes().get(idpConfig.getFirstNameAttribute()) != null
+								&& samlResponse.getAttributes().get(idpConfig.getFirstNameAttribute()).length == 1) {
+							firstName = samlResponse.getAttributes().get(idpConfig.getFirstNameAttribute())[0];
+						}
+						if (samlResponse.getAttributes().get(idpConfig.getLastNameAttribute()) != null
+								&& samlResponse.getAttributes().get(idpConfig.getLastNameAttribute()).length == 1) {
+							lastName = samlResponse.getAttributes().get(idpConfig.getLastNameAttribute())[0];
+						}
+						fullName = firstName + " " + lastName;
+					} else if (samlResponse.getAttributes().get(idpConfig.getFullNameAttr()) != null
+							&& samlResponse.getAttributes().get(idpConfig.getFullNameAttr()).length == 1) {
+						fullName = samlResponse.getAttributes().get(idpConfig.getFullNameAttr())[0];
+					}
+
+					String[] roleValues = samlResponse.getAttributes().get(idpConfig.getRoleAttribute());
+					LOGGER.debug("roleValues: "+ roleValues);
+					List<String> roleValueList = serializeGroups(roleValues);
+					Set<String> groupsToAssign = getListOfMappedGroupsToAssign(roleValues,idpConfig, userService);
+					LOGGER.debug("GROUPS TO ASSIGN="+groupsToAssign);
+					List<String> defaultGroups = (List<String>) idpConfig.getDefaultGroups();
+					boolean addDefaultGroupToNoIDPUser=StringUtils.equalsIgnoreCase(idpConfig.getEnableDefaultGroupsFor(),MoPluginConstants.ENABLE_DEFAULT_GROUPS_FOR_NO_IDP_GROUP);
+                   LOGGER.debug("add default group for no idp="+addDefaultGroupToNoIDPUser);
+					boolean addDefaultGroupsToAllUsersOrNewUsers = (StringUtils.equalsIgnoreCase(idpConfig.getEnableDefaultGroupsFor(), MoPluginConstants.ENABLE_DEFAULT_GROUPS_FOR_ALL_USERS)||StringUtils.equalsAnyIgnoreCase(idpConfig.getEnableDefaultGroupsFor(),MoPluginConstants.ENABLE_DEFAULT_GROUPS_FOR_NEW_USERS));
+					if (idpConfig.getOnTheFlyGroupMapping()) {
+						LOGGER.debug("On the fly selected. Creating user with Username: " + username + ", Email: " + email + ", " + "Name:"
+								+ fullName);
+						if (StringUtils.isBlank(fullName)) {
+							fullName = username;
+						}
+						createNewUser(username, password, fullName,email,firstName,lastName);
+						if (roleValues != null && roleValues.length > 0) {
+							ArrayList<String> roleValuesList = serializeGroups(roleValues);
+							groupsToAssign = createAndAssignNewGroupsUser(roleValuesList);
+						}
+
+						 if(addDefaultGroupsToAllUsersOrNewUsers && defaultGroups != null && defaultGroups.size()>0) {
+							for (String group : defaultGroups) {
+								if (!groupsToAssign.contains(group)) {
+									groupsToAssign.add(group);
+								}
+							}
+						}
+						else if(addDefaultGroupToNoIDPUser && defaultGroups != null && defaultGroups.size()>0){
+							if(roleValues==null){
+								for (String group : defaultGroups) {
+									if (!groupsToAssign.contains(group.trim())) {
+										groupsToAssign.add(group.trim());
+									}
+								}
+							}
+						}
+						userAdminService.addUserToGroups(username, groupsToAssign);
+					} else {
+						LOGGER.debug("Manual Group Mapping is enabled");
+						if ((idpConfig.getCreateUsersIfRoleMapped() && groupsToAssign.size() > 0)
+								|| !idpConfig.getCreateUsersIfRoleMapped()) {
+							LOGGER.debug("Roles found. Creating user with Username: " + username + ", Email: " + email
+									+ ", " + "Name:" + fullName);
+							if (StringUtils.isBlank(fullName)) {
+								fullName = username;
+							}
+							createNewUser(username, password, fullName,email,firstName,lastName);
+						}
+						if(addDefaultGroupsToAllUsersOrNewUsers && defaultGroups != null && defaultGroups.size()>0) {
+							for (String group : defaultGroups) {
+								if (!groupsToAssign.contains(group)) {
+									groupsToAssign.add(group);
+								}
+							}
+						}
+						else if(addDefaultGroupToNoIDPUser && defaultGroups != null && defaultGroups.size()>0){
+							if(roleValues==null){
+								for (String group : defaultGroups) {
+									if (!groupsToAssign.contains(group.trim())) {
+										groupsToAssign.add(group.trim());
+									}
+								}
+							}
+						}
+						LOGGER.debug("Groups are ="+groupsToAssign);
+						userAdminService.addUserToGroups(username, groupsToAssign);
+					}
+					return null;
+				}
+			});
+		} catch (Exception e) {
+//			MoSAMLException.SAMLErrorCode ee = MoSAMLException.SAMLErrorCode.USER_CREATION_DISABLED;
+//			String errorID = UUID.randomUUID().toString();
+//			LOGGER.debug("Error ID is: " + errorID);
+//			moPluginHandler.addErrorEvent(request , username, "SSO",ee.getMessage() , ee.getResolution() , errorID);
+
+			LOGGER.error("Exception occurred while creating user: " +ExceptionUtils.getMessage(e)+ ExceptionUtils.getStackTrace(e));
+		}
+		ApplicationUser createdUser = userService.getUserByName(username);
+		LOGGER.debug("New logged in user is = " + createdUser);
+		return createdUser;
+	}
+
+	private void createNewUser(final String username, final String password, final String fullName, final String email, final String firstName, final String lastName) {
+		try {
+			Directory defaultDirectory;
+			List<Directory> directoryObjects = directoryManager.findAllDirectories();
+			if (!StringUtils.endsWithIgnoreCase(idpConfig.getDefaultUserDirectory(),MoPluginConstants.DEFAULT_USER_DIRECTORY)){
+				defaultDirectory = directoryManager.findDirectoryByName(idpConfig.getDefaultUserDirectory());
+			}else{
+				defaultDirectory = directoryManager.findDirectoryByName(settings.getDefaultWritableDirectory());
+			}
+			LOGGER.debug("Default Directory : " + defaultDirectory.getName());
+			if(defaultDirectory == null || !defaultDirectory.isActive())
+			{
+				for (Directory dir :directoryObjects){
+						if(dir.isActive() && dir.getAllowedOperations().contains(CREATE_USER)){
+							defaultDirectory = dir;
+							break;
+						}
+				}
+
+			}
+			final UserTemplate user = new UserTemplate(username,defaultDirectory.getId());
+			user.setActive(true);
+			user.setEmailAddress(email);
+			user.setDirectoryId(defaultDirectory.getId());
+			user.setName(username);
+			user.setDisplayName(fullName);
+			user.setFirstName(firstName);
+			user.setLastName(lastName);
+			final PasswordCredential passwordCredential = new PasswordCredential(this.getRandomPassword(), true);
+			this.directoryManager.addUser(defaultDirectory.getId(), user, passwordCredential);
+		}
+		catch (Exception e)
+		{
+			MoSAMLLoginServlet.LOGGER.debug("Exception occurs while creating new user." + e.getMessage());
+		}
+	}
+
+	public static Set<String> getListOfMappedGroupsToAssign(String[] roleValues, MoIDPConfig idpConfig, UserService userService) {
+		Set<String> groupsToAssign = new HashSet<>();
+		if (roleValues != null && roleValues.length > 0 ) {
+			HashMap<String, String> roleMapping = idpConfig.getRoleMapping();
+			Iterator<String> it = roleMapping.keySet().iterator();
+			while (it.hasNext()) {
+				String key = it.next();
+				String value = roleMapping.get(key);
+				String[] groupNamesConfigured = StringUtils.split(value, ";");
+				LOGGER.debug("groupNamesConfigured : "+ groupNamesConfigured);
+				for (int i = 0; i < groupNamesConfigured.length; i++) {
+					String groupValue = groupNamesConfigured[i];
+					if (Arrays.asList(roleValues).contains(groupValue)) {
+						//PageRequest pageRequest = new PageRequestImpl(0, 50);
+						//Page<String> groupObjects = userService.findGroupsByName(key, pageRequest.buildRestrictedPageRequest(1));
+						if (userService.existsGroup(key)) {
+							//for (String item : groupObjects.getValues()) {
+								groupsToAssign.add(key);
+							//}
+
+						}
+					}
+				}
+			}
+		}
+		LOGGER.debug("groupsToAssign from getListofMapeedGroupsToAssign: "+ groupsToAssign);
+		return groupsToAssign;
+	}
+
+	private Set<String> createAndAssignNewGroupsUser(List<String> roleValuesList) {
+		Set<String> groupsToAssign = new HashSet<>();
+		Boolean canCreateNewGroups = idpConfig.getCreateNewGroups();
+		Boolean lowercaseRequired = idpConfig.getlowercaseGroupName();
+		try {
+			PageRequest pageRequest = new PageRequestImpl(0, PageRequest.MAX_PAGE_LIMIT);
+			Page<DetailedGroup> groupPage = userAdminService.findGroups(pageRequest);
+			HashSet<String> currentGroups = new HashSet<>();
+			Iterator<DetailedGroup> groupIterator = groupPage.getValues().iterator();
+			while (groupIterator.hasNext()) {
+				currentGroups.add(groupIterator.next().getName());
+			}
+			for (String groupsName : roleValuesList) {
+				if (!currentGroups.contains(groupsName.trim()) && BooleanUtils.toBoolean(canCreateNewGroups)) {
+					if(lowercaseRequired)   groupsName = groupsName.toLowerCase();
+					LOGGER.debug("Creating new Group with name : "+groupsName);
+					userAdminService.createGroup(groupsName);
+					groupsToAssign.add(groupsName.trim());
+				}else{
+					//Group Exists
+					groupsToAssign.add(groupsName);
+				}
+			}
+		} catch (Exception e) {
+			LOGGER.error("Exception occured while assigning New groups"+ExceptionUtils.getStackTrace(e)+ExceptionUtils.getMessage(e));
+		}
+		return groupsToAssign;
+	}
+	/**
+	 * serializeGroups() checks if any of the value has ';'. If it does, then these
+	 * values are separated and stored back in the list. Then all the values in
+	 * final list are trimmed. parameters : array of values received in saml
+	 * assertion returns : List of groups/roles
+	 */
+
+	private ArrayList<String> serializeGroups(String[] roleValues) {
+		ArrayList<String> trimmedList = new ArrayList<String>();
+		if (roleValues != null && roleValues.length != 0) {
+			ArrayList<String> roleValuesList = new ArrayList<String>(Arrays.asList(roleValues));
+			for (int i = 0; i < roleValuesList.size(); i++) {
+				if (StringUtils.contains(roleValuesList.get(i), ";")) {
+					String roleValue = roleValuesList.remove(i);
+					ArrayList<String> separatedValues = new ArrayList<String>(
+							Arrays.asList(StringUtils.split(roleValue, ";")));
+					roleValuesList.addAll(separatedValues);
+				}
+			}
+			if (!StringUtils.equals(idpConfig.getOnTheFlyFilterIDPGroupsOption(), MoPluginConstants.ON_THE_FLY_NO_GROUP_FILTER)) {
+				roleValuesList = onTheFlyFilterIDPGroups(roleValuesList);
+			}
+			for (String roleValue : roleValuesList) {
+				LOGGER.debug("Group Regex Pattern Enabled "+idpConfig.getGroupRegexPatternEnabled());
+				if(idpConfig.getGroupRegexPatternEnabled()){
+					LOGGER.debug("Transforming the rolevalue");
+					roleValue = getGroupnameFromRegexMethod(idpConfig.getRegexPatternForGroup(),idpConfig.getRegexGroups(),roleValue);
+				}
+				trimmedList.add(roleValue.trim());
+			}
+		}
+		return trimmedList;
+	}
+
+	private String updateUserProfile(String username, MoSAMLResponse samlResponse) throws UserNotFoundException,
+			OperationFailedException, GroupNotFoundException, OperationNotPermittedException {
+		String user_status = securityService.withPermission(Permission.SYS_ADMIN, "update User")
+				.call(new MoUncheckedOperation<String>(StringUtils.EMPTY, samlResponse, idpConfig, userService,
+						userAdminService, userManager, username));
+
+		LOGGER.debug("returning back from UncheckedOperation");
+
+		if (StringUtils.isEmpty(user_status)) {
+			LOGGER.debug("Error occurred while updating user profile");
+			user_status = "error_while_updating_user_profile";
+		}
+
+		return user_status;
+	}
+
+	private void showTestConfigurationResult(MoSAMLResponse moSAMLResponse, HttpServletRequest request,
+											 HttpServletResponse response, MoSAMLException e, String setup) throws IOException {
+		Boolean testConfigFailed = Boolean.FALSE;
+		StringBuffer htmlStart;
+		if (e == null) {
+			String username = "";
+			htmlStart = new StringBuffer(
+					"<html><head><meta http-equiv=\"Content-Type\" content=\"text/html; charset=utf-8\"><head><body><div style=\"font-family:Calibri;padding:0 3%;\">");
+			String[] usernameArray = moSAMLResponse.getAttributes().get(idpConfig.getUsernameAttr());
+			if (usernameArray != null && usernameArray.length == 1) {
+				username = usernameArray[0];
+			}
+			ArrayList<String> defaultGroups = (ArrayList<String>) idpConfig.getDefaultGroups();
+			Boolean isDefaultGroupExist = defaultGroups != null ? true : false;
+			if (StringUtils.isBlank(username)) {
+				htmlStart = htmlStart.append("<div style=\"color: #a94442;background-color: #f2dede;padding: 15px;"
+						+ "margin-bottom: 20px;text-align:center;border:1px solid #E6B3B2;font-size:18pt;\">TEST "
+						+ "FAILED</div><div style=\"color: #a94442;font-size:14pt; margin-bottom:20px;\">WARNING: Username "
+						+ "attribute not found in the response. Users will not be able to login.   [Please check Username attribute in User profile tab it should be similar to attribute value in IDP.] </div>");
+			} else if (!isDefaultGroupExist) {
+				htmlStart = htmlStart.append("<div style=\"color: #a94442;background-color: #f2dede;padding: 15px;"
+						+ "margin-bottom: 20px;text-align:center;border:1px solid #E6B3B2;font-size:18pt;\">TEST "
+						+ "FAILED</div><div style=\"color: #a94442;font-size:14pt; margin-bottom:20px;\">WARNING: "
+						+ "Default group for new users is not selected. Please go to Group Mapping tab and select "
+						+ "Default Group. New Users will not be able to login unless they are assigned to any "
+						+ "group.</div>");
+			} else if (BooleanUtils.toBoolean(settings.getEncryption()) && !checkJCEforMaxLen(request)) {
+				htmlStart = htmlStart.append("<div style=\"color: #a94442;background-color: #f2dede;padding: 15px;"
+						+ "margin-bottom: 20px;text-align:center;border:1px solid #E6B3B2;font-size:18pt;\">TEST "
+						+ "FAILED</div><div style=\"color: #a94442;font-size:14pt; margin-bottom:20px;\">WARNING: "
+						+ "Assertion cannot be decrypted as Java Cryptography Extension is not installed for Unlimited Strength."
+						+ "</div>");
+			} else {
+				htmlStart = htmlStart.append("<div style=\"color: #3c763d;background-color: #dff0d8; padding:2%;"
+						+ "margin-bottom:20px;text-align:center; border:1px solid #AEDB9A; font-size:18pt;\">TEST "
+						+ "SUCCESSFUL</div>");
+			}
+			htmlStart = htmlStart.append("<span style=\"font-size:14pt;\"><b>Hello</b>, " + MoSAMLUtils.sanitizeText(username) + "</span><br/>"
+					+ "<p style=\"font-weight:bold;font-size:14pt;margin-left:1%;\">ATTRIBUTES RECEIVED:</p>"
+					+ "<table style=\"border-collapse:collapse;border-spacing:0; display:table;width:100%; "
+					+ "font-size:14pt;background-color:#EDEDED;\"><tr style=\"text-align:center;\">"
+					+ "<td style=\"font-weight:bold;border:2px solid #949090;padding:2%;\">ATTRIBUTE NAME</td>"
+					+ "<td style=\"font-weight:bold;padding:2%;border:2px solid #949090; word-wrap:break-word;\">"
+					+ "ATTRIBUTE VALUE</td></tr>");
+			Iterator<String> it = moSAMLResponse.getAttributes().keySet().iterator();
+			while (it.hasNext()) {
+				String key = it.next();
+				htmlStart = htmlStart.append("<tr><td style=\"font-weight:bold;border:2px solid #949090;padding:2%;\">"
+						+ key + "</td><td style=\"padding:2%;border:2px solid #949090;word-wrap:break-word;\">");
+
+				String[] values = moSAMLResponse.getAttributes().get(key);
+				htmlStart = htmlStart.append(StringUtils.join(values, "<hr/>"));
+				htmlStart = htmlStart.append("</td></tr>");
+			}
+			htmlStart = htmlStart.append("</table></div>");
+			if(!StringUtils.equals(setup,"quick")){
+				htmlStart = htmlStart
+						.append("<div style=\"margin:3%;display:block;text-align:center;\"><input style=\"padding:1%;"
+								+ "width:100px;background: #0091CD none repeat scroll 0% 0%;cursor: pointer;font-size:15px;"
+								+ "border-width: 1px;border-style: solid;border-radius: 3px;white-space: nowrap;"
+								+ "box-sizing:border-box;border-color: #0073AA;box-shadow:0px 1px 0px rgba(120,200,230,0.6) inset;"
+								+ "color: #FFF;\" type=\"button\" value=\"Done\" onClick=\"self.close();\"></div>");
+			}else{
+				htmlStart = htmlStart.append("<br><br>");
+			}
+		} else {
+			testConfigFailed = Boolean.TRUE;
+			htmlStart = new StringBuffer("<div style=\"font-family:Calibri;padding:0 3%;\">");
+			htmlStart = htmlStart.append("<div style=\"color:#a94442;background-color:#f2dede;padding:15px;margin-bottom:20px;"
+					+ "text-align:center;border:1px solid #E6B3B2;font-size:18pt;\">TEST FAILED</div>");
+			htmlStart = htmlStart.append("<table style=\"border-collapse:collapse;border-spacing:0; display:table;width:100%;"
+					+ "font-size:14pt;\"><tr style=\"padding-top:10px;padding-bottom:10px;\"><td style=\"font-weight:bold;"
+					+ "padding:10px 5px 10px 5px;\">Error Code</td><td style=\"word-wrap:break-word;\">"
+					+ e.getErrorCode() + "</td></tr><tr><td style=\"font-weight:bold;padding:10px 5px 10px 5px;\">"
+					+ "Error Message</td><td style=\"word-wrap:break-word;\">" + e.getMessage()
+					+ "</td></tr><tr>" + "<td style=\"font-weight:bold;padding:10px 5px 10px 5px;\">Resolution</td>"
+					+ "<td style=\"word-wrap:break-word;\">" + e.getResolution() + "</tr></table></div>");
+		}
+
+		try {
+			if(!testConfigFailed) {
+				//below code need to be optimised
+				JSONObject idpConfigObject = settings.getIdpConfig(idpConfig.getId());
+				idpConfigObject.put("testConfig",moSAMLResponse.getAttributes());
+
+				//* SAML request adding in idpConfig object
+				String samlRequest = samlManager.getTestAuthnRequest(idpConfig);
+				samlRequest = XmlFormatter(samlRequest);
+				idpConfigObject.put("samlRequest", samlRequest);
+
+
+				htmlStart.append("<br><div style='color: #3c763d;background-color: #dff0d8; padding:2%;margin-bottom:20px;text-align:center; " +
+						"border:1px solid #AEDB9A; font-size:18pt;'>Authentication(SAML) Request</div>");
+				htmlStart.append("<div style='width:100%'><textarea rows='6' cols='100' word-wrap='break-word;' " +
+						"style='width:80%; margin:0px; margin-left:auto; margin-right:auto; display:block; height:350px;' id ='reqmessage' readonly>"
+						+ samlRequest + "</textarea> </div>");
+
+				if(!StringUtils.equals(setup,"quick")){
+					htmlStart = htmlStart
+							.append("<div style=\"margin:3%;display:block;text-align:center;\"><input style=\"padding:1%;"
+									+ "width:100px;background: #0091CD none repeat scroll 0% 0%;cursor: pointer;font-size:15px;"
+									+ "border-width: 1px;border-style: solid;border-radius: 3px;white-space: nowrap;"
+									+ "box-sizing:border-box;border-color: #0073AA;box-shadow:0px 1px 0px rgba(120,200,230,0.6) inset;"
+									+ "color: #FFF;\" type=\"button\" value=\"Done\" onClick=\"self.close();\"></div>");
+				}
+
+				htmlStart.append("<div style=\"margin:3%;display:block;text-align:center;\"><input id =\"copy-req-button\" style=\"padding:1%;"
+						+ "width:150px;background: #0091CD none repeat scroll 0% 0%;cursor: pointer;font-size:15px;"
+						+ "border-width: 1px;border-style: solid;border-radius: 3px;white-space: nowrap;"
+						+ "box-sizing:border-box;border-color: #0073AA;box-shadow:0px 1px 0px rgba(120,200,230,0.6) inset;"
+						+ "color: #FFF;\" type=\"button\" value=\"Copy to Clipboard\"></div>");
+				htmlStart.append("<div style=\"margin:3%;display:block;text-align:center;\"><input id =\"download-req-button\" style=\"padding:1%;"
+						+ "width:200px;background: #0091CD none repeat scroll 0% 0%;cursor: pointer;font-size:15px;"
+						+ "border-width: 1px;border-style: solid;border-radius: 3px;white-space: nowrap;"
+						+ "box-sizing:border-box;border-color: #0073AA;box-shadow:0px 1px 0px rgba(120,200,230,0.6) inset;"
+						+ "color: #FFF;\" type=\"button\" value=\"Download SAMLRequest\" onclick=\"downloadResponse()\"></div>");
+				htmlStart.append("<script>" + "document.querySelector(\"#copy-req-button\").onclick = function() {"
+						+ "document.querySelector(\"#reqmessage\").select();" + "document.execCommand('copy');" + "};"
+						+ "</script>");
+				htmlStart.append("<script>" + "function downloadResponse() {"
+						+ "var textToWrite = document.getElementById(\"reqmessage\").value;"
+						+ "var blob = new Blob([textToWrite],{" + "type: \"text/xml;charset=utf-8;\"});"
+						+ "var fileNameToSaveAs = \"SAMLRequest.xml\";"
+						+ "var downloadLink = document.createElement(\"a\");" + "downloadLink.download = fileNameToSaveAs;"
+						+ "downloadLink.innerHTML = \"Download File\";" + "if(window.navigator.msSaveOrOpenBlob){"
+						+ "navigator.msSaveBlob(blob, \"SAMLRequest.xml\");}" + "if (window.webkitURL != null){"
+						+ "downloadLink.href = window.webkitURL.createObjectURL(blob);}" + "else{"
+						+ "downloadLink.href = window.URL.createObjectURL(blob);}"
+						+ "downloadLink.onclick = destroyClickedElement;"
+						+ "document.body.appendChild(downloadLink);"
+						+ "downloadLink.style.display = \"none\";"
+						+ "downloadLink.click();}"
+						+ "function destroyClickedElement(event){" + "document.body.removeChild(event.target);" + "}"
+						+ "</script>");
+
+				String encodedSAMLResponse = request.getParameter(MoSAMLUtils.SAML_RESPONSE_PARAM);
+				String xmlSAMLResponse = new String(Base64.decode(encodedSAMLResponse), StandardCharsets.UTF_8);
+				xmlSAMLResponse = XmlFormatter(xmlSAMLResponse);
+				idpConfigObject.put("samlResponse", xmlSAMLResponse);
+
+
+				xmlSAMLResponse = HtmlUtils.htmlEscape(xmlSAMLResponse);
+
+				htmlStart.append("<br><div style='color: #3c763d;background-color: #dff0d8; padding:2%;margin-bottom:20px;text-align:center; " +
+						"border:1px solid #AEDB9A; font-size:18pt;'>Authentication(SAML) Response</div>");
+				htmlStart.append("<div style='width:100%'><textarea rows='6' cols='100' word-wrap='break-word;' " +
+						"style='width:80%; margin:0px; margin-right:auto; margin-left:auto; display:block; height:350px;' id ='resmessage' readonly>"
+						+ MoSAMLUtils.sanitizeText(xmlSAMLResponse) + "</textarea> </div>");
+				if(!StringUtils.equals(setup,"quick")){
+					htmlStart = htmlStart.append("<div style=\"margin:3%;display:block;text-align:center;\"><input style=\"padding:1%;"
+							+ "width:100px;background: #0091CD none repeat scroll 0% 0%;cursor: pointer;font-size:15px;"
+							+ "border-width: 1px;border-style: solid;border-radius: 3px;white-space: nowrap;"
+							+ "box-sizing:border-box;border-color: #0073AA;box-shadow:0px 1px 0px rgba(120,200,230,0.6) inset;"
+							+ "color: #FFF;\" type=\"button\" value=\"Done\" onClick=\"self.close();\"></div>");
+				}
+
+				htmlStart.append("<div style=\"margin:3%;display:block;text-align:center;\"><input id =\"copy-button\" style=\"padding:1%;"
+						+ "width:150px;background: #0091CD none repeat scroll 0% 0%;cursor: pointer;font-size:15px;"
+						+ "border-width: 1px;border-style: solid;border-radius: 3px;white-space: nowrap;"
+						+ "box-sizing:border-box;border-color: #0073AA;box-shadow:0px 1px 0px rgba(120,200,230,0.6) inset;"
+						+ "color: #FFF;\" type=\"button\" value=\"Copy to Clipboard\"></div>");
+				htmlStart.append("<div style=\"margin:3%;display:block;text-align:center;\"><input id =\"download-button\" style=\"padding:1%;"
+						+ "width:200px;background: #0091CD none repeat scroll 0% 0%;cursor: pointer;font-size:15px;"
+						+ "border-width: 1px;border-style: solid;border-radius: 3px;white-space: nowrap;"
+						+ "box-sizing:border-box;border-color: #0073AA;box-shadow:0px 1px 0px rgba(120,200,230,0.6) inset;"
+						+ "color: #FFF;\" type=\"button\" value=\"Download SAMLResponse\" onclick=\"downloadRequest()\"></div>");
+				htmlStart.append("<script>" + "document.querySelector(\"#copy-button\").onclick = function() {"
+						+ "document.querySelector(\"#resmessage\").select();" + "document.execCommand('copy');" + "};"
+						+ "</script>");
+				htmlStart.append("<script>" + "function downloadRequest() {"
+						+ "var textToWrite = document.getElementById(\"resmessage\").value;"
+						+ "var blob = new Blob([textToWrite],{" + "type: \"text/xml;charset=utf-8;\"});"
+						+ "var fileNameToSaveAs = \"SAMLResponse.xml\";"
+						+ "var downloadLink = document.createElement(\"a\");"
+						+ "downloadLink.download = fileNameToSaveAs;" + "downloadLink.innerHTML = \"Download File\";"
+						+ "if(window.navigator.msSaveOrOpenBlob){"
+						+ "navigator.msSaveBlob(blob, \"SAMLResponse.xml\");}" + "if (window.webkitURL != null){"
+						+ "downloadLink.href = window.webkitURL.createObjectURL(blob);}" + "else{"
+						+ "downloadLink.href = window.URL.createObjectURL(blob);}"
+						+ "downloadLink.onclick = destroyClickedElement;"
+						+ "document.body.appendChild(downloadLink);"
+						+ "downloadLink.style.display = \"none\";"
+						+ "downloadLink.click();}"
+						+ "function destroyClickedElement(event){" + "document.body.removeChild(event.target);" + "}"
+						+ "</script>");
+
+				settings.setIdpConfig(idpConfigObject, idpConfig.getId());
+			}
+
+			response.setCharacterEncoding("iso-8859-1");
+			response.setContentType("text/html");
+			response.getOutputStream().write(htmlStart.toString().getBytes(StandardCharsets.UTF_8));
+
+		}catch (Exception ie){
+			LOGGER.debug("Error while getting saml request or resposne");
+		}
+	}
+
+	public String XmlFormatter(String xml) {
+
+		try {
+			final InputSource src = new InputSource(new StringReader(xml));
+			final Node document = DocumentBuilderFactory.newInstance().newDocumentBuilder().parse(src)
+					.getDocumentElement();
+			final Boolean keepDeclaration = Boolean.valueOf(xml.startsWith("<?xml"));
+
+			// May need this:
+			// System.setProperty(DOMImplementationRegistry.PROPERTY,"com.sun.org.apache.xerces.internal.dom.DOMImplementationSourceImpl");
+
+			final DOMImplementationRegistry registry = DOMImplementationRegistry.newInstance();
+			final DOMImplementationLS impl = (DOMImplementationLS) registry.getDOMImplementation("LS");
+			final LSSerializer writer = impl.createLSSerializer();
+
+			writer.getDomConfig().setParameter("format-pretty-print", Boolean.TRUE);
+			writer.getDomConfig().setParameter("xml-declaration", keepDeclaration);
+
+			return writer.writeToString(document);
+		} catch (Exception e) {
+			throw new RuntimeException(e);
+		}
+	}
+
+	private Boolean checkJCEforMaxLen(HttpServletRequest request) {
+		try {
+			LOGGER.debug("Checking JCE Unlimited encryption capability...");
+			LOGGER.debug("JCE capability =  " + Cipher.getMaxAllowedKeyLength("AES256"));
+			String encodedSAMLResponse = request.getParameter(MoSAMLUtils.SAML_RESPONSE_PARAM);
+			Response MoSAMLResponse = MoSAMLUtils.decodeResponse(encodedSAMLResponse);
+			Assertion assertion;
+			if (MoSAMLResponse.getAssertions() != null && MoSAMLResponse.getAssertions().size() > 0) {
+				LOGGER.debug("SAML Response is not encrypted...");
+				assertion = MoSAMLResponse.getAssertions().get(0);
+				return true;
+			} else {
+				String EncryptionAlgorithm = MoSAMLResponse.getEncryptedAssertions().get(0).getEncryptedData()
+						.getEncryptionMethod().getAlgorithm();
+				EncryptionAlgorithm = EncryptionAlgorithm.substring(EncryptionAlgorithm.lastIndexOf("#") + 1);
+				int encryptionBit = Integer.parseInt(EncryptionAlgorithm.replaceAll("\\D+", ""));
+				int jecStrength = Cipher.getMaxAllowedKeyLength(EncryptionAlgorithm);
+				LOGGER.debug("#EncryptionBit unsed SAML Response = " + encryptionBit);
+				LOGGER.debug("#EncryptionAlgorithm unsed SAML Response = " + EncryptionAlgorithm);
+				LOGGER.debug("JEC Strength = " + encryptionBit);
+
+				if (jecStrength < encryptionBit)
+					return false;
+				else
+					return true;
+			}
+		} catch (Exception e) {
+			LOGGER.debug("Exception" + e);
+		}
+		return false;
+
+	}
+
+	private String getIdpId(HttpServletRequest request, HttpServletResponse response) {
+		String idpId = "";
+
+		//Checking the Session for SP Initiated. Doesn't work if the Lax or Strict cookie is set
+		HttpSession session = request.getSession();
+		idpId = (String) session.getAttribute("idpId");
+		if(StringUtils.isNotBlank(idpId)) {
+			session.removeAttribute("idpId");
+			return idpId;
+		}
+
+		//Checking the Cookie for SP Initiated. Works when Lax or Strict cookie is set but doesn't work if the URL is http
+
+		Cookie idpIdCookie = MoHttpUtils.getCookie(MoPluginConstants.IDP_ID_COOKIE,request);
+		if(idpIdCookie!=null){
+			idpId = idpIdCookie.getValue();
+			if(StringUtils.isNotBlank(idpId)){
+				MoHttpUtils.clearCookie(MoPluginConstants.IDP_ID_COOKIE,request,response);
+				return idpId;
+			}
+		}
+
+		//Checking parameter in ACS URL for IDP Initiated SSO
+		idpId = request.getParameter("idp");
+		if(StringUtils.isNotBlank(idpId)) {
+			return idpId;
+		}
+
+		// Checking Issuer if nothing else works. Doesn't work if there are multiple IDPs with same issuer like multiple Azure or ADFS
+		String issuer = MoSAMLManager.getIssuerFromResponse(request);
+		int issuerCount = 0; //To check whether multiple IDPs have the same issuer. In that case issuer can't be used to identify the IDP
+		for (Map.Entry<String, String> issuerEntry : settings.getIssuerMap().entrySet()) {
+			if (StringUtils.equals(issuer, issuerEntry.getValue())) {
+				idpId = issuerEntry.getKey();
+				issuerCount++;
+			}
+		}
+
+		if (issuerCount > 1)
+			return null;
+
+		return idpId;
+	}
+
+	private ArrayList<String> onTheFlyFilterIDPGroups(List<String> groupList) {
+		ArrayList<String> filteredGroups = new ArrayList<>();
+
+		if (StringUtils.equals(idpConfig.getOnTheFlyFilterIDPGroupsOption(), MoPluginConstants.ON_THE_FLY_FILTER_GROUPS_STARTS_WITH)) {
+			LOGGER.debug("filtering groups with Start-with filter :" + idpConfig.getOnTheFlyFilterIDPGroupsKey());
+			for (String groupName : groupList) {
+				if (StringUtils.startsWithIgnoreCase(groupName, idpConfig.getOnTheFlyFilterIDPGroupsKey())) {
+					filteredGroups.add(groupName);
+				}
+			}
+		} else if (StringUtils.equals(idpConfig.getOnTheFlyFilterIDPGroupsOption(), MoPluginConstants.ON_THE_FLY_FILTER_GROUPS_CONTAINS)) {
+			LOGGER.debug("filtering groups with Contains filter :" + idpConfig.getOnTheFlyFilterIDPGroupsKey());
+			for (String groupName : groupList) {
+				if (StringUtils.containsIgnoreCase(groupName, idpConfig.getOnTheFlyFilterIDPGroupsKey())) {
+					filteredGroups.add(groupName);
+				}
+			}
+		} else if (StringUtils.equals(idpConfig.getOnTheFlyFilterIDPGroupsOption(), MoPluginConstants.ON_THE_FLY_FILTER_GROUPS_WITH_REGEX)) {
+			LOGGER.debug("filtering groups with Regex pattern :" + idpConfig.getOnTheFlyFilterIDPGroupsKey());
+			Pattern pattern = Pattern.compile(StringUtils.trimToEmpty(idpConfig.getOnTheFlyFilterIDPGroupsKey()));
+
+			for (String groupName : groupList) {
+				Matcher matcher = pattern.matcher(groupName);
+				try {
+					if (matcher.find()) {
+						filteredGroups.add(groupName);
+					}
+				} catch (Exception e) {
+					LOGGER.error("Error occurred while applying regex on IDP groups", e);
+				}
+			}
+		} else {
+			LOGGER.debug("No group filter chosen");
+			return (ArrayList<String>) groupList;
+		}
+
+		return filteredGroups;
+	}
+
+	public void setSettings(MoSAMLSettings settings) {
+		this.settings = settings;
+	}
+
+	public TemplateRenderer getRenderer() {
+		return renderer;
+	}
+
+	private Boolean isRegexValid(String regex) {
+		try {
+			Pattern.compile(regex);
+		} catch (PatternSyntaxException e) {
+			LOGGER.debug("Invalid Regex Pattern.");
+			return Boolean.FALSE;
+		}
+		return Boolean.TRUE;
+	}
+
+	private Cookie getSSOTYPECookie(HttpServletRequest request) {
+		Cookie[] cookies = request.getCookies();
+		if (cookies != null) {
+			for (Cookie cookie : cookies) {
+				if (cookie.getName().equals(MoPluginConstants.SSOTYPE_COOKIE)) {
+					return cookie;
+				}
+			}
+		}
+		return null;
+	}
+
+	
+	public MoSAMLManager getSamlManager() {
+		return samlManager;
+	}
+
+	public void setSamlManager(MoSAMLManager samlManager) {
+		this.samlManager = samlManager;
+	}
+
+	public MoPluginHandler getMoPluginHandler() {
+		return moPluginHandler;
+	}
+
+	public void setMoPluginHandler(MoPluginHandler moPluginHandler) {
+		this.moPluginHandler = moPluginHandler;
+	}
+
+	public UserService getUserService() {
+		return userService;
+	}
+
+	public void setUserService(UserService userService) {
+		this.userService = userService;
+	}
+
+	public UserAdminService getUserAdminService() {
+		return userAdminService;
+	}
+
+	public void setUserAdminService(UserAdminService userAdminService) {
+		this.userAdminService = userAdminService;
+	}
+
+	public UserManager getUserManager() {
+		return userManager;
+	}
+
+	public void setUserManager(UserManager userManager) {
+		this.userManager = userManager;
+	}
+
+	public SecurityService getSecurityService() {
+		return securityService;
+	}
+
+	public void setSecurityService(SecurityService securityService) {
+		this.securityService = securityService;
+	}
+
+	public MoSAMLSettings getSettings() {
+		return settings;
+	}
+
+}
