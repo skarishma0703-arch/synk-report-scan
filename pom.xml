@@ -148,6 +148,12 @@
 			<version>4.10</version>
 			<scope>test</scope>
 		</dependency>
+<!--		<dependency>-->
+<!--			<groupId>commons-lang</groupId>-->
+<!--			<artifactId>commons-lang</artifactId>-->
+<!--			<version>2.6</version>-->
+<!--			<scope>provided</scope>-->
+<!--		</dependency>-->
 
 		<dependency>
 			<groupId>com.atlassian.plugin</groupId>
@@ -442,11 +448,18 @@
 			<scope>provided
 			</scope>
 		</dependency>-->
-<!--		<dependency>-->
-<!--			<groupId>commons-lang</groupId>-->
-<!--			<artifactId>commons-lang</artifactId>-->
-<!--			<version>2.6</version>-->
-<!--		</dependency>-->
+		<!-- commons-lang 2.6 removed due to security vulnerability GHSA-j288-q9x7-2f5v -->
+		<!-- Replaced with commons-lang3 3.x below -->
+		<!--<dependency>
+			<groupId>commons-lang</groupId>
+			<artifactId>commons-lang</artifactId>
+			<version>2.6</version>
+		</dependency>-->
+		<dependency>
+			<groupId>org.apache.commons</groupId>
+			<artifactId>commons-lang3</artifactId>
+			<version>3.18.0</version>
+		</dependency>
 		<dependency>
 			<groupId>com.google.guava</groupId>
 			<artifactId>guava</artifactId>
