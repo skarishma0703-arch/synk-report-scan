@@ -290,14 +290,7 @@
 		<dependency>
 			<groupId>org.apache.commons</groupId>
 			<artifactId>commons-lang3</artifactId>
-			<version>3.20.0</version>
 			<scope>provided</scope>
-			<exclusions>
-			<exclusion>
-				<groupId>commons-lang</groupId>
-				<artifactId>commons-lang</artifactId>
-			</exclusion>
-			</exclusions>
 		</dependency>
 		<dependency>
 			<groupId>org.slf4j</groupId>
@@ -388,11 +381,11 @@
 
 		<!-- Added by Lokesh -->
 		<!-- https://mvnrepository.com/artifact/ca.juliusdavies/not-yet-commons-ssl -->
-<!--		<dependency>-->
-<!--			<groupId>ca.juliusdavies</groupId>-->
-<!--			<artifactId>not-yet-commons-ssl</artifactId>-->
-<!--			<version>0.3.11</version>-->
-<!--		</dependency>-->
+		<!--		<dependency>-->
+		<!--			<groupId>ca.juliusdavies</groupId>-->
+		<!--			<artifactId>not-yet-commons-ssl</artifactId>-->
+		<!--			<version>0.3.11</version>-->
+		<!--		</dependency>-->
 
 		<!-- https://mvnrepository.com/artifact/org.apache.santuario/xmlsec -->
 		<dependency>
